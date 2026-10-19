@@ -1,0 +1,142 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Nav from '../components/Nav.astro';
+import { getNewsPosts, getLatestBuild } from '../lib/sanity.js';
+
+const b = import.meta.env.BASE_URL.replace(/\/$/, '');
+const build = await getLatestBuild();
+const posts = await getNewsPosts();
+
+function formatDate(dateStr: string) {
+  return new Date(dateStr).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+function renderBody(body: any[]): string {
+  if (!body?.length) return '';
+  return body.map((block: any) => {
+    if (block._type !== 'block') return '';
+    const style = block.style ?? 'normal';
+    const text = block.children?.map((span: any) => {
+      let t = (span.text ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      if (span.marks?.includes('strong')) t = `<strong>${t}</strong>`;
+      if (span.marks?.includes('em')) t = `<em>${t}</em>`;
+      return t;
+    }).join('') ?? '';
+    if (!text.trim()) return '<p class="post-spacer">&nbsp;</p>';
+    if (style === 'h2') return `<h2>${text}</h2>`;
+    if (style === 'h3') return `<h3>${text}</h3>`;
+    return `<p>${text}</p>`;
+  }).join('');
+}
+---
+<BaseLayout title="Q3Rally — News">
+  <div slot="topbar" class="top-bar">
+    <div class="top-bar-left">
+      <div class="live-dot"></div>
+      <span>
+        <b>BUILD {build?.version ?? '—'}</b>
+        &nbsp;·&nbsp; LIVE
+        &nbsp;·&nbsp; <b>{posts.length} NEWS POSTS</b>
+      </span>
+    </div>
+    <div class="top-bar-right">
+      <span class="hl">FREE</span><span>·</span><span>OPEN SOURCE</span><span>·</span><span>GPL v2</span>
+    </div>
+  </div>
+
+  <Nav slot="nav" active={`${b}/news`} build={build} />
+
+  <div class="page-header">
+    <div>
+      <div class="section-label"><span>NEWS</span> &nbsp;/&nbsp; UPDATES &amp; RELEASES</div>
+      <h1 class="page-title">STAY /<br /><span class="orange">TUNED.</span></h1>
+    </div>
+    <div class="page-header-right">
+      <div class="count-big">{posts.length}<span>.</span></div>
+      <div class="count-label">Posts</div>
+    </div>
+  </div>
+
+  {posts.length === 0 && (
+    <section class="empty-section">
+      <div class="empty-state">
+        <div class="empty-icon">[ // ]</div>
+        <div class="empty-label">No news yet.</div>
+        <p class="empty-sub">Check back soon for updates.</p>
+      </div>
+    </section>
+  )}
+
+  {posts.length > 0 && (
+    <section class="posts-section">
+      {posts.map((post, i) => (
+        <article class="post-card">
+          <div class="post-meta">
+            <span class="post-date">{formatDate(post.publishedAt)}</span>
+            <span class="post-index">#{String(posts.length - i).padStart(2, '0')}</span>
+          </div>
+          <h2 class="post-title">{post.title}</h2>
+          {post.body?.length > 0 && (
+            <div class="post-body" set:html={renderBody(post.body)} />
+          )}
+        </article>
+      ))}
+    </section>
+  )}
+</BaseLayout>
+
+<style>
+  .top-bar { background: var(--black); border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; height: 36px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+  .top-bar-left { display: flex; align-items: center; gap: 10px; }
+  .live-dot { width: 7px; height: 7px; background: var(--orange); border-radius: 50%; animation: pulse 2s infinite; }
+  .top-bar-left span { color: var(--gray-light); }
+  .top-bar-left span b { color: var(--white); }
+  .top-bar-right { display: flex; align-items: center; gap: 16px; color: var(--gray); font-size: 10px; }
+  .hl { color: var(--orange); }
+
+  .page-header { background-color: var(--dark); background-image: var(--stripe); padding: 56px 80px 52px; display: flex; align-items: flex-end; justify-content: space-between; border-bottom: 1px solid #222; }
+  .section-label { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 14px; }
+  .section-label span { color: var(--orange); }
+  .page-title { font-family: 'Barlow Condensed', sans-serif; font-size: clamp(64px, 8vw, 110px); font-weight: 900; line-height: 0.88; text-transform: uppercase; }
+  .page-title .orange { color: var(--orange); font-style: italic; }
+  .page-header-right { text-align: right; }
+  .count-big { font-family: 'Barlow Condensed', sans-serif; font-size: 56px; font-weight: 900; line-height: 1; }
+  .count-big span { color: var(--orange); }
+  .count-label { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; margin-top: 4px; }
+
+  .empty-section { padding: 80px; background: var(--black); display: flex; justify-content: center; }
+  .empty-state { text-align: center; }
+  .empty-icon { font-family: 'Share Tech Mono', monospace; font-size: 28px; color: #2e2e2e; margin-bottom: 20px; }
+  .empty-label { font-family: 'Barlow Condensed', sans-serif; font-size: 28px; font-weight: 900; text-transform: uppercase; color: var(--gray-light); margin-bottom: 10px; }
+  .empty-sub { font-size: 13px; color: var(--gray); }
+
+  .posts-section { background: var(--black); padding: 0 80px 80px; }
+
+  .post-card { border-bottom: 1px solid #1a1a1a; padding: 56px 0; }
+  .post-card:first-child { padding-top: 64px; }
+
+  .post-meta { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .post-date { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--orange); letter-spacing: 0.15em; text-transform: uppercase; }
+  .post-index { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: #333; letter-spacing: 0.1em; }
+
+  .post-title { font-family: 'Barlow Condensed', sans-serif; font-size: clamp(36px, 4vw, 56px); font-weight: 900; text-transform: uppercase; letter-spacing: 0.02em; line-height: 1; margin-bottom: 24px; }
+
+  .post-body { max-width: 720px; font-size: 15px; color: var(--gray-light); line-height: 1.75; }
+  .post-body p { margin-bottom: 16px; }
+  .post-body p:last-child { margin-bottom: 0; }
+  .post-body h2 { font-family: 'Barlow Condensed', sans-serif; font-size: 28px; font-weight: 900; text-transform: uppercase; color: var(--white); margin: 28px 0 12px; }
+  .post-body h3 { font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 900; text-transform: uppercase; color: var(--white); margin: 20px 0 8px; }
+  .post-body strong { color: var(--white); font-weight: 600; }
+  .post-body em { color: var(--gray-light); font-style: italic; }
+
+  @media (max-width: 768px) {
+    .top-bar { padding: 0 16px; height: 32px; font-size: 10px; }
+    .page-header { padding: 36px 20px 32px; }
+    .posts-section { padding: 0 20px 48px; }
+    .post-card { padding: 36px 0; }
+    .post-card:first-child { padding-top: 40px; }
+    .post-title { font-size: clamp(28px, 8vw, 44px); }
+    .post-body { font-size: 14px; }
+    .count-big { font-size: 40px; }
+  }
+</style>

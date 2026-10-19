@@ -1,0 +1,517 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Nav from '../components/Nav.astro';
+import { getBuilds, getLatestBuild, urlFor } from '../lib/sanity.js';
+
+const b = import.meta.env.BASE_URL.replace(/\/$/, '');
+const build = await getLatestBuild();
+const allBuilds = await getBuilds();
+
+const CATEGORY_ORDER = ['Stable', 'Addon Cars', 'Addon Maps', 'Skins', 'Misc', 'Outdated'];
+
+// Gruppieren nach Kategorie
+const grouped: Record<string, typeof allBuilds> = {};
+for (const cat of CATEGORY_ORDER) grouped[cat] = [];
+for (const b2 of allBuilds) {
+  const cat = b2.category ?? 'Misc';
+  if (!grouped[cat]) grouped[cat] = [];
+  grouped[cat].push(b2);
+}
+const categories = CATEGORY_ORDER.filter(c => grouped[c]?.length > 0);
+
+const platformIcons: Record<string, string> = {
+  Windows: `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>`,
+  Linux:   `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.131.96 0 1.5.17.4.015.666.063.768.398.13.44.244.818 1.048.818.602 0 .74-.312.758-.7.016-.391.074-.766.16-1.052.172-.573.437-.882.895-1.256.457-.374 1.006-.793 1.393-1.43.348-.574.611-1.234.849-1.958a6.79 6.79 0 00-.35-4.917c-.51-1.198-1.278-2.116-2.086-2.826-.268-.232-.52-.452-.747-.644-.56-.466-.978-.866-1.204-1.443-.273-.69-.312-1.423-.312-2.19 0-1.667 1.028-2.983 2.506-3.705.648-.318 1.39-.513 2.14-.558a5.65 5.65 0 011.01.047c1.412.141 2.633.748 3.426 1.822.424.571.697 1.236.786 1.964a5.36 5.36 0 01-.077 1.708c-.073.341-.188.678-.325 1.006a8.7 8.7 0 01-1.215 2.076c-.553.706-1.218 1.343-1.923 1.957-.344.299-.696.596-1.032.914-.7.652-1.33 1.418-1.765 2.32a8.73 8.73 0 00-.748 2.762c-.026.279-.039.562-.039.849 0 1.087.186 2.165.542 3.016.35.836.912 1.51 1.644 1.95.716.43 1.583.617 2.545.617.547 0 1.099-.074 1.635-.217 1.083-.29 2.07-.942 2.748-1.888.66-.921.999-2.076.999-3.357 0-.517-.055-1.036-.162-1.548"/></svg>`,
+  macOS:   `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>`,
+};
+
+const VERSION_CATEGORIES = ['Stable', 'Outdated'];
+
+function formatDate(iso: string) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function showV(category: string) {
+  return VERSION_CATEGORIES.includes(category);
+}
+---
+<BaseLayout title="Q3Rally — Downloads">
+  <div slot="topbar" class="top-bar">
+    <div class="top-bar-left">
+      <div class="live-dot"></div>
+      <span>
+        <b>BUILD {build?.version ?? '—'}</b>
+        &nbsp;·&nbsp; LIVE
+        &nbsp;·&nbsp; <b>{allBuilds.length} RELEASES</b>
+      </span>
+    </div>
+    <div class="top-bar-right">
+      <span class="hl">FREE</span><span>·</span><span>OPEN SOURCE</span><span>·</span><span>GPL v2</span>
+    </div>
+  </div>
+
+  <Nav slot="nav" active={`${b}/downloads`} build={build} />
+
+  <div class="page-header">
+    <div>
+      <div class="section-label"><span>DOWNLOADS</span> &nbsp;/&nbsp; ALL RELEASES</div>
+      <h1 class="page-title">GET THE /<br /><span class="orange">GAME.</span></h1>
+    </div>
+    <div class="page-header-right">
+      <div class="count-big">{allBuilds.length}<span>.</span></div>
+      <div class="count-label">Releases</div>
+    </div>
+  </div>
+
+  <!-- CATEGORY NAV -->
+  {categories.length > 1 && (
+    <div class="cat-nav">
+      {categories.map(cat => (
+        <a href={`#cat-${cat.toLowerCase().replace(/\s+/g,'-')}`} class="cat-nav-item">{cat}</a>
+      ))}
+    </div>
+  )}
+
+  <!-- CATEGORIES -->
+  {categories.map(cat => (
+    <section class="cat-section" id={`cat-${cat.toLowerCase().replace(/\s+/g,'-')}`}>
+      <div class="cat-header">
+        <div class="cat-title">{cat}</div>
+        <div class="cat-count">{grouped[cat].length} release{grouped[cat].length !== 1 ? 's' : ''}</div>
+        {grouped[cat].length > 1 && <span class="carousel-counter"></span>}
+      </div>
+
+      <div class="cat-releases">
+    {grouped[cat].map(release => {
+        const isVersion   = VERSION_CATEGORIES.includes(release.category ?? '');
+        const addonShots  = (release.screenshots ?? []).filter(Boolean);
+        const addonMain   = addonShots[0];
+        const addonThumbs = addonShots.slice(1, 5);
+        return (
+          <div class="release-block">
+            <div class="release-meta">
+              <span class="release-version">{showV(release.category) ? `v${release.version}` : release.version}</span>
+              {release.isCurrent && <span class="current-badge">CURRENT</span>}
+              <span class="release-date">{formatDate(release.publishedAt)}</span>
+              {release.fileHash && <span class="release-hash">SIG: {release.fileHash}</span>}
+            </div>
+
+            {/* ── VERSION RELEASES: platform grid ── */}
+            {isVersion && (
+              <div class="release-body">
+                <div class="platforms-grid">
+                  {release.platforms?.map(p => (
+                    <a href={p.url ?? '#'} class={`platform-card${p.recommended ? ' recommended' : ''}`} data-umami-event="download" data-umami-event-file={p.url?.split('/').pop() ?? ''} data-umami-event-platform={p.name}>
+                      {p.recommended && <div class="rec-badge">RECOMMENDED</div>}
+                      <div class="platform-top">
+                        <div class="platform-icon" set:html={platformIcons[p.name] ?? ''} />
+                        <div class="platform-name">{p.name}</div>
+                      </div>
+                      {p.subtitle && <div class="platform-subtitle">{p.subtitle}</div>}
+                      <div class="platform-size">{p.size ?? ''}</div>
+                      <div class="platform-dl">
+                        <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        DOWNLOAD
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── ADDON WITH SCREENSHOTS: gallery carousel + sidebar ── */}
+            {!isVersion && addonShots.length > 0 && (
+              <div class="addon-gallery-layout">
+                <div class="addon-gallery">
+                  <div class="addon-main-img">
+                    <img
+                      src={urlFor(addonMain).width(1200).fit('max').auto('format').url()}
+                      data-full={urlFor(addonMain).width(1200).fit('max').auto('format').url()}
+                      data-thumb={urlFor(addonMain).width(400).fit('max').auto('format').url()}
+                      alt={release.version}
+                      loading="lazy"
+                    />
+                  </div>
+                  {addonThumbs.length > 0 && (
+                    <div class="addon-thumbs">
+                      {Array.from({length: 4}).map((_, ti) => {
+                        const shot = addonThumbs[ti];
+                        return shot
+                          ? <div class="addon-thumb"
+                              data-full={urlFor(shot).width(1200).fit('max').auto('format').url()}
+                              data-thumb={urlFor(shot).width(400).fit('max').auto('format').url()}>
+                              <img src={urlFor(shot).width(400).fit('max').auto('format').url()} alt="" loading="lazy" />
+                            </div>
+                          : <div class="addon-thumb empty"></div>;
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div class="addon-sidebar">
+                  <div class="platforms-grid addon-platforms">
+                    {release.platforms?.map(p => (
+                      <a href={p.url ?? '#'} class={`platform-card${p.recommended ? ' recommended' : ''}`} data-umami-event="download" data-umami-event-file={p.url?.split('/').pop() ?? ''} data-umami-event-platform={p.name}>
+                        {p.recommended && <div class="rec-badge">RECOMMENDED</div>}
+                        <div class="platform-top">
+                          <div class="platform-icon" set:html={platformIcons[p.name] ?? ''} />
+                          <div class="platform-name">{p.name}</div>
+                        </div>
+                        {p.subtitle && <div class="platform-subtitle">{p.subtitle}</div>}
+                        <div class="platform-size">{p.size ?? ''}</div>
+                        <div class="platform-dl">
+                          <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                          DOWNLOAD
+                        </div>
+                      </a>
+                    ))}
+                  </div>
+                  {release.changelog && <div class="addon-desc">{release.changelog}</div>}
+                </div>
+              </div>
+            )}
+
+            {/* ── ADDON WITHOUT SCREENSHOTS: simple layout ── */}
+            {!isVersion && addonShots.length === 0 && (
+              <div class="release-body addon-layout">
+                <div class="platforms-grid">
+                  {release.platforms?.map(p => (
+                    <a href={p.url ?? '#'} class={`platform-card${p.recommended ? ' recommended' : ''}`} data-umami-event="download" data-umami-event-file={p.url?.split('/').pop() ?? ''} data-umami-event-platform={p.name}>
+                      {p.recommended && <div class="rec-badge">RECOMMENDED</div>}
+                      <div class="platform-top">
+                        <div class="platform-icon" set:html={platformIcons[p.name] ?? ''} />
+                        <div class="platform-name">{p.name}</div>
+                      </div>
+                      {p.subtitle && <div class="platform-subtitle">{p.subtitle}</div>}
+                      <div class="platform-size">{p.size ?? ''}</div>
+                      <div class="platform-dl">
+                        <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        DOWNLOAD
+                      </div>
+                    </a>
+                  ))}
+                </div>
+                {release.changelog && <div class="addon-desc">{release.changelog}</div>}
+              </div>
+            )}
+
+            {/* ── VERSION screenshots fallback strip ── */}
+            {isVersion && release.screenshots?.length > 0 && (
+              <div class="shots-strip">
+                {release.screenshots.map((shot: any, i: number) => (
+                  <button class="strip-thumb" data-lightbox
+                    data-src={urlFor(shot).width(1920).fit('max').auto('format').url()}
+                    data-index={i} aria-label={`Screenshot ${i + 1}`}>
+                    <img src={urlFor(shot).width(320).height(180).fit('crop').auto('format').url()} alt="" loading="lazy" />
+                    <div class="strip-overlay">
+                      <svg viewBox="0 0 24 24" width="16" height="16" stroke="white" fill="none" stroke-width="1.5"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* ── VERSION changelog ── */}
+            {isVersion && release.changelog && (
+              <details class="changelog">
+                <summary class="changelog-summary">
+                  <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                  CHANGELOG v{release.version}
+                </summary>
+                <pre class="changelog-body">{release.changelog}</pre>
+              </details>
+            )}
+          </div>
+        );
+      })}
+      {grouped[cat].length > 1 && (
+        <>
+          <button class="carousel-btn carousel-prev" hidden aria-label="Previous">
+            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <button class="carousel-btn carousel-next" hidden aria-label="Next">
+            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </>
+      )}
+    </div>
+    </section>
+  ))}
+
+  {allBuilds.length === 0 && (
+    <section class="empty-section">
+      <div class="empty-state">
+        <div class="empty-icon">[ // ]</div>
+        <div class="empty-label">No releases yet.</div>
+      </div>
+    </section>
+  )}
+</BaseLayout>
+
+<style>
+  .top-bar { background: var(--black); border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; height: 36px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+  .top-bar-left { display: flex; align-items: center; gap: 10px; }
+  .live-dot { width: 7px; height: 7px; background: var(--orange); border-radius: 50%; animation: pulse 2s infinite; }
+  .top-bar-left span { color: var(--gray-light); }
+  .top-bar-left span b { color: var(--white); }
+  .top-bar-right { display: flex; align-items: center; gap: 16px; color: var(--gray); font-size: 10px; }
+  .hl { color: var(--orange); }
+
+  .page-header { background-color: var(--dark); background-image: var(--stripe); padding: 56px 80px 52px; display: flex; align-items: flex-end; justify-content: space-between; border-bottom: 1px solid #222; }
+  .section-label { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 14px; }
+  .section-label span { color: var(--orange); }
+  .page-title { font-family: 'Barlow Condensed', sans-serif; font-size: clamp(64px, 8vw, 110px); font-weight: 900; line-height: 0.88; text-transform: uppercase; }
+  .page-title .orange { color: var(--orange); font-style: italic; }
+  .page-header-right { text-align: right; }
+  .count-big { font-family: 'Barlow Condensed', sans-serif; font-size: 56px; font-weight: 900; line-height: 1; }
+  .count-big span { color: var(--orange); }
+  .count-label { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; margin-top: 4px; }
+
+  /* CATEGORY NAV */
+  .cat-nav { background: var(--dark2); border-bottom: 1px solid #1e1e1e; padding: 0 80px; display: flex; gap: 0; overflow-x: auto; }
+  .cat-nav-item { font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--gray); padding: 14px 20px; border-right: 1px solid #1e1e1e; white-space: nowrap; transition: color 0.15s; }
+  .cat-nav-item:hover { color: var(--orange); }
+
+  /* CATEGORY SECTION */
+  .cat-section { padding: 56px 80px; background: var(--black); border-top: 1px solid #1a1a1a; }
+  .cat-header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 32px; }
+  .cat-title { font-family: 'Barlow Condensed', sans-serif; font-size: 28px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.03em; }
+  .cat-count { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray); letter-spacing: 0.1em; }
+
+  /* RELEASE BLOCK */
+  .release-block { margin-bottom: 48px; padding-bottom: 48px; border-bottom: 1px solid #1a1a1a; }
+  .release-block:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+  .release-meta { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
+  .release-version { font-family: 'Barlow Condensed', sans-serif; font-size: 28px; font-weight: 900; line-height: 1; }
+  .current-badge { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--orange); letter-spacing: 0.15em; text-transform: uppercase; border: 1px solid var(--orange); padding: 2px 8px; }
+  .release-date { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray); letter-spacing: 0.1em; }
+  .release-hash { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: #444; letter-spacing: 0.08em; }
+
+  /* PLATFORM CARDS */
+  .platforms-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; margin-bottom: 16px; }
+  .platform-card { background: var(--dark2); border: 1px solid #222; padding: 24px 22px; display: flex; flex-direction: column; gap: 5px; text-decoration: none; color: inherit; transition: border-color 0.15s, background 0.15s; position: relative; }
+  .platform-card:hover { border-color: var(--orange); background: #131313; }
+  .platform-card.recommended { border-color: #2a2a2a; }
+  .rec-badge { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--orange); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 6px; }
+  .platform-top { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .platform-icon { color: var(--gray); flex-shrink: 0; }
+  .platform-name { font-family: 'Barlow Condensed', sans-serif; font-size: 24px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.02em; }
+  .platform-subtitle { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray); letter-spacing: 0.08em; }
+  .platform-size { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray-light); margin-top: 2px; }
+  .platform-dl { margin-top: auto; padding-top: 16px; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 800; letter-spacing: 0.12em; color: var(--orange); display: flex; align-items: center; gap: 8px; }
+
+  /* CHANGELOG */
+  .changelog { border: 1px solid #1a1a1a; }
+  .changelog-summary { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; padding: 12px 16px; display: flex; align-items: center; gap: 8px; list-style: none; transition: color 0.15s; }
+  .changelog-summary:hover { color: var(--orange); }
+  .changelog[open] .changelog-summary svg { transform: rotate(90deg); }
+  .changelog-body { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray-light); line-height: 1.8; white-space: pre-wrap; word-break: break-word; padding: 16px; border-top: 1px solid #1a1a1a; background: rgba(0,0,0,0.3); }
+
+  /* ADDON SIMPLE LAYOUT (no screenshots) */
+  .release-body { }
+  .release-body.addon-layout { display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: start; margin-bottom: 16px; }
+  .addon-layout .platforms-grid { grid-template-columns: 1fr; width: 240px; margin-bottom: 0; }
+  .addon-desc { font-size: 14px; color: var(--gray-light); line-height: 1.7; padding-top: 4px; }
+  .release-body:not(.addon-layout) .platforms-grid { margin-bottom: 16px; }
+
+  /* ADDON GALLERY LAYOUT (with screenshots) */
+  .addon-gallery-layout { display: grid; grid-template-columns: minmax(0, 460px) 1fr; gap: 20px; align-items: start; margin-bottom: 20px; }
+  .addon-gallery { display: flex; flex-direction: column; gap: 2px; }
+  .addon-main-img { aspect-ratio: 16/9; background: #161616; background-image: var(--stripe); overflow: hidden; }
+  .addon-main-img img { width: 100%; height: 100%; object-fit: cover; transition: opacity 0.18s ease; display: block; }
+  .addon-thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; }
+  .addon-thumb { aspect-ratio: 16/9; background: #121212; background-image: var(--stripe); overflow: hidden; }
+  .addon-thumb img { width: 100%; height: 100%; object-fit: cover; transition: opacity 0.15s; display: block; }
+  .addon-thumb[data-full] { cursor: pointer; }
+  .addon-thumb[data-full]:hover img { opacity: 0.7; }
+  .addon-thumb[data-full]:hover { outline: 1px solid var(--orange); outline-offset: -1px; }
+  .addon-thumb.empty { opacity: 0.2; }
+  .addon-sidebar { display: flex; flex-direction: column; gap: 16px; }
+  .addon-platforms { grid-template-columns: 1fr !important; margin-bottom: 0 !important; }
+
+  /* SCREENSHOT STRIP */
+  .shots-strip { display: flex; gap: 4px; overflow-x: auto; margin-bottom: 16px; padding-bottom: 4px; scrollbar-width: thin; scrollbar-color: #333 transparent; }
+  .shots-strip::-webkit-scrollbar { height: 4px; }
+  .shots-strip::-webkit-scrollbar-track { background: transparent; }
+  .shots-strip::-webkit-scrollbar-thumb { background: #333; }
+  .strip-thumb { flex-shrink: 0; width: 213px; height: 120px; overflow: hidden; position: relative; border: none; padding: 0; cursor: pointer; background: var(--dark2); }
+  .strip-thumb img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; display: block; }
+  .strip-thumb:hover img { transform: scale(1.05); }
+  .strip-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.45); opacity: 0; transition: opacity 0.2s; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,85,0,0.3); }
+  .strip-thumb:hover .strip-overlay { opacity: 1; }
+
+  /* CAROUSEL */
+  .cat-header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 32px; flex-wrap: wrap; }
+  .carousel-counter { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--orange); letter-spacing: 0.15em; margin-left: auto; }
+  .cat-releases { position: relative; }
+  .cat-releases .release-block { transition: opacity 0.2s; }
+  .carousel-btn { position: absolute; top: 50%; transform: translateY(-50%); z-index: 10; background: rgba(10,10,10,0.88); border: 1px solid #333; color: var(--gray-light); width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: border-color 0.15s, color 0.15s; }
+  .carousel-btn[hidden] { display: none; }
+  .carousel-prev { left: 0; }
+  .carousel-next { right: 0; }
+  .carousel-btn:hover:not(:disabled) { border-color: var(--orange); color: var(--orange); }
+  .carousel-btn:disabled { opacity: 0.2; cursor: default; }
+
+  /* EMPTY */
+  .empty-section { padding: 80px; display: flex; justify-content: center; }
+  .empty-state { text-align: center; }
+  .empty-icon { font-family: 'Share Tech Mono', monospace; font-size: 28px; color: #2e2e2e; margin-bottom: 20px; }
+  .empty-label { font-family: 'Barlow Condensed', sans-serif; font-size: 28px; font-weight: 900; text-transform: uppercase; color: var(--gray-light); }
+
+  /* LIGHTBOX */
+  .lightbox { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; transition: opacity 0.2s; }
+  .lightbox[aria-hidden="true"] { opacity: 0; pointer-events: none; }
+  .lightbox[aria-hidden="false"] { opacity: 1; pointer-events: all; }
+  .lb-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.92); }
+  .lb-content { position: relative; z-index: 1; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .lb-content img { max-width: 90vw; max-height: 80vh; object-fit: contain; display: block; }
+  .lb-counter { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: #444; letter-spacing: 0.1em; }
+  .lb-close { position: fixed; top: 24px; right: 28px; z-index: 2; background: rgba(20,20,20,0.8); border: 1px solid #333; color: var(--gray-light); width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: border-color 0.15s; }
+  .lb-close:hover { border-color: var(--orange); color: var(--orange); }
+  .lb-prev, .lb-next { position: fixed; top: 50%; transform: translateY(-50%); z-index: 2; background: rgba(20,20,20,0.8); border: 1px solid #333; color: var(--gray-light); width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: border-color 0.15s; }
+  .lb-prev { left: 20px; }
+  .lb-next { right: 20px; }
+  .lb-prev:hover, .lb-next:hover { border-color: var(--orange); color: var(--orange); }
+
+  @media (max-width: 768px) {
+    .top-bar { padding: 0 16px; height: 32px; }
+    .top-bar-right { display: none; }
+    .page-header { padding: 36px 20px 32px; flex-direction: column; align-items: flex-start; gap: 16px; }
+    .cat-nav { padding: 0 20px; }
+    .cat-section { padding: 36px 20px; }
+    .platforms-grid { grid-template-columns: 1fr; }
+    .addon-layout { grid-template-columns: 1fr !important; }
+    .addon-layout .platforms-grid { width: 100% !important; }
+    .addon-gallery-layout { grid-template-columns: 1fr; }
+    .release-body.addon-layout { grid-template-columns: 1fr; }
+    .carousel-btn { display: none; }
+    .count-big { font-size: 40px; }
+  }
+</style>
+
+<div id="lightbox" class="lightbox" aria-hidden="true" role="dialog">
+  <div class="lb-backdrop"></div>
+  <button class="lb-close" aria-label="Close">
+    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  </button>
+  <button class="lb-prev" aria-label="Previous">
+    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+  </button>
+  <button class="lb-next" aria-label="Next">
+    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+  </button>
+  <div class="lb-content">
+    <img id="lb-img" src="" alt="" />
+    <div id="lb-counter" class="lb-counter"></div>
+  </div>
+</div>
+
+<script>
+  const cards = Array.from(document.querySelectorAll('[data-lightbox]'));
+  const lb = document.getElementById('lightbox');
+  const lbImg = document.getElementById('lb-img') as HTMLImageElement;
+  const lbCounter = document.getElementById('lb-counter');
+  let current = 0;
+
+  function open(index: number) {
+    current = index;
+    const card = cards[current] as HTMLElement;
+    lbImg.src = card.dataset.src ?? '';
+    lbCounter.textContent = `${current + 1} / ${cards.length}`;
+    lb.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function close() {
+    lb.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    lbImg.src = '';
+  }
+
+  function prev() { open((current - 1 + cards.length) % cards.length); }
+  function next() { open((current + 1) % cards.length); }
+
+  cards.forEach((card, i) => card.addEventListener('click', () => open(i)));
+  document.querySelector('.lb-close').addEventListener('click', close);
+  document.querySelector('.lb-backdrop').addEventListener('click', close);
+  document.querySelector('.lb-prev').addEventListener('click', prev);
+  document.querySelector('.lb-next').addEventListener('click', next);
+
+  document.addEventListener('keydown', e => {
+    if (lb.getAttribute('aria-hidden') === 'true') return;
+    if (e.key === 'Escape') close();
+    if (e.key === 'ArrowLeft') prev();
+    if (e.key === 'ArrowRight') next();
+  });
+
+  // ── Category carousels (1 per page, overlay arrows) ──
+  document.querySelectorAll('.cat-section').forEach(section => {
+    const container = section.querySelector('.cat-releases') as HTMLElement;
+    if (!container) return;
+
+    const releases = Array.from(container.querySelectorAll(':scope > .release-block')) as HTMLElement[];
+    if (releases.length <= 1) return;
+
+    const prevBtn = container.querySelector('.carousel-prev') as HTMLButtonElement;
+    const nextBtn = container.querySelector('.carousel-next') as HTMLButtonElement;
+    const counter = section.querySelector('.carousel-counter') as HTMLElement;
+    if (!prevBtn || !nextBtn || !counter) return;
+
+    let current = 0;
+    const total = releases.length;
+
+    prevBtn.hidden = false;
+    nextBtn.hidden = false;
+
+    function showPage(page: number) {
+      current = Math.max(0, Math.min(page, total - 1));
+      releases.forEach((r, i) => {
+        if (i === current) {
+          r.style.opacity = '0';
+          r.style.display = '';
+          setTimeout(() => { r.style.opacity = '1'; }, 20);
+        } else {
+          r.style.display = 'none';
+        }
+      });
+      counter.textContent = `${current + 1} / ${total}`;
+      prevBtn.disabled = current === 0;
+      nextBtn.disabled = current === total - 1;
+    }
+
+    prevBtn.addEventListener('click', () => showPage(current - 1));
+    nextBtn.addEventListener('click', () => showPage(current + 1));
+    showPage(0);
+  });
+
+  // ── Addon gallery carousels ──
+  document.querySelectorAll('.addon-gallery').forEach(gallery => {
+    const mainImg = gallery.querySelector('.addon-main-img img');
+    if (!mainImg) return;
+
+    gallery.querySelectorAll('.addon-thumb[data-full]').forEach(thumb => {
+      thumb.addEventListener('click', () => {
+        const thumbImg = thumb.querySelector('img');
+        if (!thumbImg) return;
+
+        const oldFull  = mainImg.dataset.full;
+        const oldThumb = mainImg.dataset.thumb;
+        const newFull  = thumb.dataset.full;
+        const newThumb = thumb.dataset.thumb;
+
+        mainImg.style.opacity = '0';
+        setTimeout(() => {
+          mainImg.src           = newFull;
+          mainImg.dataset.full  = newFull;
+          mainImg.dataset.thumb = newThumb;
+          mainImg.style.opacity = '1';
+        }, 180);
+
+        thumbImg.src           = oldThumb;
+        thumb.dataset.full     = oldFull;
+        thumb.dataset.thumb    = oldThumb;
+      });
+    });
+  });
+</script>

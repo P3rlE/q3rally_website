@@ -1,0 +1,1199 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Nav from '../components/Nav.astro';
+import { getLatestBuild } from '../lib/sanity.js';
+
+const b = import.meta.env.BASE_URL.replace(/\/$/, '');
+const build = await getLatestBuild();
+const API_BASE = 'https://ladder.q3rally.com/index.php';
+const IMG_BASE  = 'https://ladder.q3rally.com/images';
+---
+<BaseLayout title="Q3Rally — Ladder" description="Q3Rally competitive ladder — top placements, match history and player profiles.">
+  <div slot="topbar" class="top-bar">
+    <div class="top-bar-left">
+      <div class="live-dot"></div>
+      <span><b>LADDER</b> &nbsp;·&nbsp; LIVE &nbsp;·&nbsp; <b id="tb-matches">—</b> MATCHES &nbsp;·&nbsp; <b id="tb-players">—</b> PLAYERS</span>
+    </div>
+    <div class="top-bar-right">
+      <span class="hl">COMPETITIVE</span><span>·</span><span>RANKINGS</span><span>·</span><span>STATS</span>
+    </div>
+  </div>
+
+  <Nav slot="nav" active={`${b}/ladder`} build={build} />
+
+  <!-- PAGE HEADER -->
+  <div class="page-header">
+    <div>
+      <div class="section-label"><span>LADDER</span> &nbsp;/&nbsp; COMPETITIVE RANKINGS</div>
+      <h1 class="page-title">RACE<br /><span class="orange">THE TOP.</span></h1>
+    </div>
+    <div class="page-header-stats">
+      <div class="hstat"><div class="hstat-val" id="hs-matches">—</div><div class="hstat-label">Matches</div></div>
+      <div class="hstat"><div class="hstat-val" id="hs-players">—</div><div class="hstat-label">Players</div></div>
+      <div class="hstat"><div class="hstat-val" id="hs-modes">—</div><div class="hstat-label">Game Modes</div></div>
+      <div class="hstat"><div class="hstat-val" id="hs-updated">—</div><div class="hstat-label">Last Update</div></div>
+    </div>
+  </div>
+
+  <!-- MAIN TABS -->
+  <div class="main-tabs">
+    <button class="main-tab active" data-tab="leaderboard">LEADERBOARD</button>
+    <button class="main-tab" data-tab="activity">RECENT ACTIVITY</button>
+    <button class="main-tab" data-tab="rankings">PLAYER RANKINGS</button>
+    <button class="main-tab" data-tab="ghosts">GHOSTS</button>
+  </div>
+
+  <!-- ── LEADERBOARD TAB ── -->
+  <div id="tab-leaderboard" class="tab-panel active">
+    <div class="lb-toolbar">
+      <div class="mode-tabs-wrap">
+        <div class="mode-tabs" id="mode-tabs"></div>
+      </div>
+      <div class="source-toggle">
+        <button class="src-btn active" data-src="all">ALL</button>
+        <button class="src-btn" data-src="online">ONLINE</button>
+        <button class="src-btn" data-src="offline">OFFLINE</button>
+      </div>
+    </div>
+    <div class="lb-body">
+      <div class="map-panel">
+        <div class="map-panel-label">MAP</div>
+        <select id="map-select" class="map-select"></select>
+        <div id="map-levelshot" class="map-levelshot"></div>
+        <div id="map-name" class="map-name"></div>
+      </div>
+      <div class="lb-table-wrap">
+        <div id="lb-status" class="lb-status">Loading…</div>
+        <table id="lb-table" class="lb-table" hidden>
+          <thead>
+            <tr>
+              <th class="th-rank">RANK</th>
+              <th>PLAYER</th>
+              <th id="lb-col3">TIME</th>
+              <th>VEHICLE</th>
+              <th>SET ON</th>
+            </tr>
+          </thead>
+          <tbody id="lb-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── RECENT ACTIVITY TAB ── -->
+  <div id="tab-activity" class="tab-panel">
+    <div class="activity-wrap">
+      <div id="activity-feed" class="activity-feed">
+        <div class="lb-status">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PLAYER RANKINGS TAB ── -->
+  <div id="tab-rankings" class="tab-panel">
+    <div class="rankings-wrap">
+      <div class="rankings-toolbar">
+        <input id="rankings-search" class="toolbar-input" type="text" placeholder="Search player…" />
+        <div class="rankings-sort-btns">
+          <button class="sort-btn active" data-sort="wins">WINS</button>
+          <button class="sort-btn" data-sort="matches">MATCHES</button>
+          <button class="sort-btn" data-sort="kd">K/D</button>
+          <button class="sort-btn" data-sort="kills">KILLS</button>
+        </div>
+      </div>
+      <table class="rankings-table" id="rankings-table">
+        <thead>
+          <tr>
+            <th class="th-rank">#</th>
+            <th>PLAYER</th>
+            <th>WINS</th>
+            <th>MATCHES</th>
+            <th>KILLS</th>
+            <th>DEATHS</th>
+            <th>K/D</th>
+            <th>BEST LAP</th>
+          </tr>
+        </thead>
+        <tbody id="rankings-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── GHOSTS TAB ── lap ghosts from the ladder (GET /ghosts/catalog, /ghosts) -->
+  <div id="tab-ghosts" class="tab-panel">
+    <div class="lb-toolbar">
+      <div class="mode-tabs-wrap">
+        <div class="mode-tabs" id="gh-vehicle-tabs"></div>
+      </div>
+    </div>
+    <div class="lb-body">
+      <div class="map-panel">
+        <div class="map-panel-label">MAP</div>
+        <select id="gh-map" class="map-select"></select>
+        <div class="map-panel-label">TRACK</div>
+        <select id="gh-variant" class="map-select"></select>
+        <div id="gh-build-wrap" class="gh-build-wrap" hidden>
+          <div class="map-panel-label">MAP VERSION</div>
+          <select id="gh-build" class="map-select"></select>
+        </div>
+        <div id="gh-levelshot" class="map-levelshot"></div>
+        <div id="gh-map-name" class="map-name"></div>
+      </div>
+      <div class="lb-table-wrap">
+        <div id="gh-status" class="lb-status">Loading…</div>
+        <table id="gh-table" class="lb-table" hidden>
+          <thead>
+            <tr>
+              <th class="th-rank">RANK</th>
+              <th>PLAYER</th>
+              <th>BEST LAP</th>
+              <th>GAP</th>
+              <th>VEHICLE</th>
+              <th>SET ON</th>
+              <th>GHOST</th>
+            </tr>
+          </thead>
+          <tbody id="gh-body"></tbody>
+        </table>
+        <p class="gh-note">Best lap ghost per player, track and vehicle. Race them in Q3Rally: start a <b>Ghost Race</b> and pick a ghost before the start.</p>
+      </div>
+    </div>
+  </div>
+</BaseLayout>
+
+<!-- PLAYER PROFILE MODAL -->
+<div id="profile-modal" class="modal" aria-hidden="true">
+  <div class="modal-backdrop"></div>
+  <div class="modal-panel">
+    <button class="modal-close" aria-label="Close">
+      <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div id="profile-content" class="modal-content">Loading…</div>
+  </div>
+</div>
+
+<!-- MATCH DETAIL MODAL -->
+<div id="match-modal" class="modal" aria-hidden="true">
+  <div class="modal-backdrop"></div>
+  <div class="modal-panel">
+    <button class="modal-close" aria-label="Close">
+      <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div id="match-content" class="modal-content">Loading…</div>
+  </div>
+</div>
+
+<style is:global>
+  /* TOP BAR */
+  .top-bar { background: var(--black); border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; height: 36px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+  .top-bar-left { display: flex; align-items: center; gap: 10px; }
+  .live-dot { width: 7px; height: 7px; background: var(--orange); border-radius: 50%; animation: pulse 2s infinite; }
+  .top-bar-left span { color: var(--gray-light); }
+  .top-bar-left span b { color: var(--white); }
+  .top-bar-right { display: flex; align-items: center; gap: 16px; color: var(--gray); font-size: 10px; }
+  .hl { color: var(--orange); }
+
+  /* PAGE HEADER */
+  .page-header { background-color: var(--dark); background-image: var(--stripe); padding: 56px 80px 52px; display: flex; align-items: flex-end; justify-content: space-between; border-bottom: 1px solid #222; flex-wrap: wrap; gap: 32px; }
+  .section-label { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 14px; }
+  .section-label span { color: var(--orange); }
+  .page-title { font-family: 'Barlow Condensed', sans-serif; font-size: clamp(64px, 8vw, 110px); font-weight: 900; line-height: 0.88; text-transform: uppercase; }
+  .page-title .orange { color: var(--orange); font-style: italic; }
+  .page-header-stats { display: flex; gap: 40px; flex-wrap: wrap; align-items: flex-end; }
+  .hstat { text-align: right; }
+  .hstat-val { font-family: 'Barlow Condensed', sans-serif; font-size: 44px; font-weight: 900; line-height: 1; color: var(--white); }
+  .hstat-label { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; margin-top: 4px; }
+
+  /* MAIN TABS */
+  .main-tabs { background: var(--dark2); border-bottom: 1px solid #1e1e1e; display: flex; padding: 0 80px; }
+  .main-tab { font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--gray); padding: 16px 24px; border: none; background: none; cursor: pointer; border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s; }
+  .main-tab:hover { color: var(--orange); }
+  .main-tab.active { color: var(--orange); border-bottom-color: var(--orange); }
+
+  /* TAB PANELS */
+  .tab-panel { display: none; background: var(--black); }
+  .tab-panel.active { display: block; }
+
+  /* LEADERBOARD TOOLBAR */
+  .lb-toolbar { background: var(--dark); border-bottom: 1px solid #1a1a1a; padding: 0 80px; display: flex; align-items: stretch; justify-content: space-between; gap: 24px; }
+  .mode-tabs-wrap { flex: 1; overflow-x: auto; display: flex; }
+  .mode-tabs { display: flex; gap: 0; }
+  .mode-tab { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gray); padding: 16px 20px; border: none; background: none; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; transition: color 0.15s, border-color 0.15s; }
+  .mode-tab:hover { color: var(--white); }
+  .mode-tab.active { color: var(--orange); border-bottom-color: var(--orange); }
+  .source-toggle { display: flex; gap: 0; align-items: center; padding: 12px 0; flex-shrink: 0; border-left: 1px solid #1a1a1a; padding-left: 24px; }
+  .src-btn { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gray); padding: 5px 12px; border: 1px solid #252525; background: none; cursor: pointer; transition: color 0.15s, border-color 0.15s, background 0.15s; margin-left: -1px; }
+  .src-btn.active { color: var(--orange); border-color: var(--orange); background: rgba(255,85,0,0.05); z-index: 1; position: relative; }
+
+  /* LEADERBOARD BODY */
+  .lb-body { display: grid; grid-template-columns: 200px 1fr; padding: 40px 80px; gap: 40px; }
+  .map-panel { display: flex; flex-direction: column; gap: 10px; }
+  .map-panel-label { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; }
+  .map-select { background: var(--dark2); border: 1px solid #2a2a2a; color: var(--white); font-family: 'Share Tech Mono', monospace; font-size: 10px; padding: 8px 10px; width: 100%; letter-spacing: 0.05em; cursor: pointer; }
+  .map-select:focus { outline: none; border-color: var(--orange); }
+  .map-levelshot { height: 120px; background: #0d0d0d; background-image: var(--stripe); overflow: hidden; }
+  .map-levelshot img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
+  .map-name { font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; text-transform: uppercase; color: var(--gray-light); letter-spacing: 0.04em; }
+  .lb-status { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray); letter-spacing: 0.1em; padding: 40px 0; }
+  .lb-table-wrap { overflow-x: auto; }
+  .lb-table { width: 100%; border-collapse: collapse; }
+  .lb-table th { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; text-align: left; padding: 10px 16px; border-bottom: 1px solid #1a1a1a; }
+  .th-rank { width: 48px; }
+  .lb-table td { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--gray-light); padding: 14px 16px; border-bottom: 1px solid #0f0f0f; }
+  .lb-table tbody tr:hover td { background: rgba(255,255,255,0.02); }
+  .lb-table td.td-rank { font-family: 'Barlow Condensed', sans-serif; font-size: 24px; font-weight: 900; color: var(--white); }
+  .rank-1 .td-rank { color: var(--orange); }
+  .rank-2 .td-rank { color: #b0b0b0; }
+  .rank-3 .td-rank { color: #9a7040; }
+  .player-link { color: inherit; cursor: pointer; }
+  .player-link:hover { color: var(--orange); }
+
+  /* GHOSTS */
+  .gh-build-wrap { display: flex; flex-direction: column; gap: 10px; }
+  .gh-build-wrap[hidden] { display: none !important; }
+  .gh-note { font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: 0.05em; color: var(--gray); margin: 18px 16px 0; line-height: 1.6; }
+  .gh-note b { color: var(--orange); font-weight: 400; }
+  .gh-dl { color: var(--orange); text-decoration: none; border-bottom: 1px solid transparent; }
+  .gh-dl:hover { border-bottom-color: var(--orange); }
+  .gh-gap { color: var(--gray); }
+
+  /* RECENT ACTIVITY */
+  .activity-wrap { padding: 40px 80px; }
+  .activity-feed { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+  .activity-card { background: var(--dark2); border: 1px solid #1a1a1a; padding: 18px 24px; cursor: pointer; transition: border-color 0.15s; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: start; }
+  .activity-card:hover { border-color: #333; }
+  .activity-card-left {}
+  .activity-mode { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--orange); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 6px; }
+  .activity-map { font-family: 'Barlow Condensed', sans-serif; font-size: 26px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.03em; line-height: 1; margin-bottom: 8px; }
+  .activity-winner { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray-light); }
+  .activity-winner span { color: var(--orange); font-weight: 700; }
+  .activity-players { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray); margin-top: 4px; }
+  .activity-card-right { text-align: right; }
+  .activity-date { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray); white-space: nowrap; }
+  .activity-server { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: #3a3a3a; margin-top: 4px; white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+  .activity-source { display: inline-block; font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; padding: 2px 8px; margin-top: 6px; }
+  .src-online { border: 1px solid #1f3a1f; color: #4a8a4a; }
+  .src-offline { border: 1px solid #2a2a2a; color: #555; }
+  .activity-section-label { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; padding: 20px 0 10px; }
+  .activity-section-label:first-child { padding-top: 0; }
+
+  /* PLAYER RANKINGS */
+  .rankings-wrap { padding: 0; }
+  .rankings-toolbar { padding: 16px 80px; background: var(--dark); border-bottom: 1px solid #1a1a1a; display: flex; align-items: center; gap: 16px; }
+  .toolbar-input { background: var(--dark2); border: 1px solid #2a2a2a; color: var(--white); font-family: 'Share Tech Mono', monospace; font-size: 10px; padding: 8px 12px; letter-spacing: 0.08em; width: 200px; }
+  .toolbar-input:focus { outline: none; border-color: var(--orange); }
+  .toolbar-input::placeholder { color: #444; }
+  .rankings-sort-btns { display: flex; gap: 0; margin-left: auto; }
+  .sort-btn { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gray); padding: 6px 14px; border: 1px solid #2a2a2a; background: none; cursor: pointer; margin-left: -1px; transition: color 0.15s, border-color 0.15s; }
+  .sort-btn.active { color: var(--orange); border-color: var(--orange); z-index: 1; position: relative; }
+  .rankings-table { width: 100%; border-collapse: collapse; }
+  .rankings-table th { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; text-align: left; padding: 12px 80px 12px 16px; border-bottom: 1px solid #1a1a1a; background: var(--dark); }
+  .rankings-table th:first-child { padding-left: 80px; width: 64px; }
+  .rankings-table th:last-child { padding-right: 80px; }
+  .rankings-table td { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--gray-light); padding: 14px 80px 14px 16px; border-bottom: 1px solid #0f0f0f; }
+  .rankings-table td:first-child { padding-left: 80px; }
+  .rankings-table td:last-child { padding-right: 80px; }
+  .rankings-table tbody tr { cursor: pointer; transition: background 0.1s; }
+  .rankings-table tbody tr:hover td { background: rgba(255,255,255,0.02); }
+  .rankings-table td.td-rank { font-family: 'Barlow Condensed', sans-serif; font-size: 24px; font-weight: 900; color: var(--white); }
+  .rankings-table tr:nth-child(1) .td-rank { color: var(--orange); }
+  .rankings-table tr:nth-child(2) .td-rank { color: #b0b0b0; }
+  .rankings-table tr:nth-child(3) .td-rank { color: #9a7040; }
+  .td-player-name { font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--white); }
+  .td-player-rank { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--gray); letter-spacing: 0.08em; margin-top: 2px; }
+  .td-highlight { color: var(--white); }
+  .kd-positive { color: #5a9a5a; }
+  .bot-badge { font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: 0.12em; color: #555; border: 1px solid #2a2a2a; padding: 1px 5px; vertical-align: middle; margin-left: 4px; }
+
+  /* MODALS */
+  .modal { position: fixed; inset: 0; z-index: 200; display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px; transition: opacity 0.2s; overflow-y: auto; }
+  .modal[aria-hidden="true"] { opacity: 0; pointer-events: none; }
+  .modal[aria-hidden="false"] { opacity: 1; pointer-events: all; }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.9); }
+  .modal-panel { position: relative; z-index: 1; background: var(--dark); border: 1px solid #2a2a2a; width: 100%; max-width: 960px; padding: 40px; }
+  .modal-close { position: absolute; top: 16px; right: 16px; background: rgba(20,20,20,0.8); border: 1px solid #2a2a2a; color: var(--gray-light); width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: border-color 0.15s, color 0.15s; }
+  .modal-close:hover { border-color: var(--orange); color: var(--orange); }
+  .modal-content { color: var(--gray-light); }
+
+  /* PROFILE CONTENT */
+  .pc-name { font-family: 'Barlow Condensed', sans-serif; font-size: 44px; font-weight: 900; text-transform: uppercase; line-height: 1; margin-bottom: 8px; }
+  .pc-rank-bar { background: var(--dark2); border: 1px solid #222; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+  .pc-rank-name { font-family: 'Barlow Condensed', sans-serif; font-size: 17px; font-weight: 700; text-transform: uppercase; color: var(--gray-light); }
+  .pc-score { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--orange); letter-spacing: 0.1em; }
+  .pc-section { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--orange); letter-spacing: 0.15em; text-transform: uppercase; margin: 20px 0 10px; border-bottom: 1px solid #1a1a1a; padding-bottom: 6px; }
+  .pc-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; }
+  .pc-stat { background: var(--dark2); padding: 12px 14px; }
+  .pc-stat-label { font-family: 'Share Tech Mono', monospace; font-size: 8px; color: var(--gray); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 4px; }
+  .pc-stat-val { font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; }
+  .pc-mode-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .pc-mode { background: var(--dark2); border: 1px solid #1a1a1a; padding: 14px; }
+  .pc-mode-name { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--orange); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 10px; }
+  .pc-mode-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
+  .pc-ms-label { font-family: 'Share Tech Mono', monospace; font-size: 8px; color: var(--gray); letter-spacing: 0.08em; text-transform: uppercase; }
+  .pc-ms-val { font-family: 'Barlow Condensed', sans-serif; font-size: 18px; font-weight: 700; color: var(--white); }
+
+  /* ACHIEVEMENTS */
+  .ach-list { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .ach-row { display: flex; align-items: center; gap: 0; background: var(--dark2); border: 1px solid #1e1e1e; overflow: hidden; }
+  .ach-locked { opacity: 0.3; }
+  .ach-icon { width: 52px; height: 52px; flex-shrink: 0; border-right: 1px solid #1e1e1e; display: flex; align-items: center; justify-content: center; }
+  .ach-mid { flex: 1; padding: 10px 12px; min-width: 0; }
+  .ach-name { font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gray-light); margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ach-bar { height: 2px; background: #1a1a1a; }
+  .ach-fill { height: 100%; transition: width 0.3s; }
+  .ach-tier { width: 52px; height: 52px; flex-shrink: 0; border-left: 1px solid #1e1e1e; display: flex; flex-direction: row; align-items: baseline; justify-content: center; gap: 1px; padding: 0 4px; }
+  .ach-tier-val { font-family: 'Barlow Condensed', sans-serif; font-size: 18px; font-weight: 900; color: var(--white); line-height: 1; }
+  .ach-tier-max { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; color: var(--gray); }
+  .ach-locked-label { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: #333; }
+
+  /* MATCH DETAIL */
+  .md-header { margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #1a1a1a; }
+  .md-mode { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--orange); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 6px; }
+  .md-map { font-family: 'Barlow Condensed', sans-serif; font-size: 36px; font-weight: 900; text-transform: uppercase; line-height: 1; }
+  .md-meta { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray); margin-top: 8px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .md-table { width: 100%; border-collapse: collapse; }
+  .md-table th { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--gray); letter-spacing: 0.12em; text-transform: uppercase; text-align: left; padding: 8px 12px; border-bottom: 1px solid #1a1a1a; }
+  .md-table td { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray-light); padding: 11px 12px; border-bottom: 1px solid #0f0f0f; }
+  .md-table tbody tr:first-child td { color: var(--orange); }
+  .md-player-link { cursor: pointer; }
+  .md-player-link:hover { color: var(--orange); }
+
+  @media (max-width: 768px) {
+    /* TOP BAR */
+    .top-bar { padding: 0 16px; height: 32px; }
+    .top-bar-right { display: none; }
+
+    /* PAGE HEADER */
+    .page-header { padding: 32px 20px 28px; gap: 20px; }
+    .page-header-stats { gap: 20px; }
+    .hstat-val { font-size: 28px; }
+
+    /* MAIN TABS */
+    .main-tabs { padding: 0 16px; overflow-x: auto; }
+    .main-tab { padding: 14px 16px; font-size: 9px; white-space: nowrap; }
+
+    /* LEADERBOARD TOOLBAR */
+    .lb-toolbar { padding: 0 16px; flex-wrap: wrap; gap: 0; }
+    .mode-tabs-wrap { width: 100%; border-bottom: 1px solid #1a1a1a; }
+    .mode-tab { padding: 12px 14px; font-size: 12px; }
+    .source-toggle { border-left: none; padding-left: 0; padding: 10px 0; width: 100%; }
+
+    /* LEADERBOARD BODY */
+    .lb-body { grid-template-columns: 1fr; padding: 20px 16px; gap: 20px; }
+    .map-panel { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .map-levelshot { height: 80px; flex: 1; min-width: 120px; }
+    .map-select { width: auto; flex: 1; }
+    .gh-build-wrap { flex-direction: row; align-items: center; flex: 1 1 100%; }
+    .gh-note { margin: 16px 0 0; }
+
+    /* ACTIVITY */
+    .activity-wrap { padding: 20px 16px; }
+    .activity-feed { grid-template-columns: 1fr; }
+
+    /* RANKINGS */
+    .rankings-toolbar { padding: 12px 16px; flex-wrap: wrap; gap: 10px; }
+    .toolbar-input { width: 100%; }
+    .rankings-sort-btns { margin-left: 0; width: 100%; }
+    .sort-btn { flex: 1; text-align: center; }
+    .rankings-table th { padding: 10px 8px 10px 8px; }
+    .rankings-table th:first-child { padding-left: 16px; }
+    .rankings-table th:last-child { padding-right: 16px; }
+    .rankings-table td { padding: 12px 8px; font-size: 11px; }
+    .rankings-table td:first-child { padding-left: 16px; }
+    .rankings-table td:last-child { padding-right: 16px; }
+    .td-player-name { font-size: 16px; }
+
+    /* MODALS */
+    .modal { padding: 0; align-items: flex-end; }
+    .modal-panel { max-width: 100%; border-left: none; border-right: none; border-bottom: none; padding: 28px 20px 32px; max-height: 90vh; overflow-y: auto; }
+
+    /* PROFILE */
+    .pc-name { font-size: 32px; }
+    .pc-grid { grid-template-columns: repeat(2, 1fr); }
+    .ach-list { grid-template-columns: 1fr; }
+  }
+</style>
+
+<script define:vars={{ API_BASE, IMG_BASE }}>
+const RANK_NAMES = [
+  'Rookie Driver','Street Newbie','Weekend Racer','Track Learner',
+  'Amateur Racer','Street Racer','Semi-Pro Driver','Pro Racer',
+  'Elite Driver','Track Dominator','Master of Speed','Racing Legend',
+  'Asphalt King','Grand Champion','Q3Rally Icon'
+];
+// Score thresholds from profile_shared.h — must mirror PROFILE_RANK_TABLE
+const RANK_SCORE_THRESHOLDS = [0,50,150,350,700,1200,2000,3200,5000,7500,11000,16000,22000,30000,40000];
+function rankNameFromScore(score) {
+  let idx = 0;
+  for (let i = 0; i < RANK_SCORE_THRESHOLDS.length; i++) {
+    if ((score ?? 0) >= RANK_SCORE_THRESHOLDS[i]) idx = i;
+  }
+  return RANK_NAMES[idx];
+}
+const MODE_LABELS = {
+  GT_RACING:'Racing', GT_RACING_DM:'Racing DM', GT_SPRINT:'Sprint',
+  GT_TEAM_RACING:'Team Racing', GT_TEAM_RACING_DM:'Team Racing DM',
+  GT_ELIMINATION:'Elimination', GT_LCS:'Last Car Standing',
+  GT_DERBY:'Derby', GT_DEATHMATCH:'Deathmatch',
+  GT_TEAM:'Team DM', GT_CTF:'CTF', GT_CTF4:'4-Team CTF',
+  GT_DOMINATION:'Domination', GT_KOTH:'King of the Hill',
+};
+const RACE_MODES = new Set(['GT_RACING','GT_RACING_DM','GT_SPRINT','GT_TEAM_RACING','GT_TEAM_RACING_DM']);
+
+let allMatches = [], mapMeta = {}, levelshotManifest = {};
+let activeSrc = 'all', activeMode = '', activeMap = '';
+let rankingsSort = 'wins', rankingsSearch = '';
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function canonMode(raw) {
+  if (!raw) return null;
+  let m = String(raw).trim().toUpperCase().replace(/[\s-]+/g,'_');
+  if (!m.startsWith('GT_')) m = 'GT_' + m;
+  return m;
+}
+function modeLabel(m) {
+  return MODE_LABELS[m] || m.replace(/^GT_/, '').replace(/_/g, ' ');
+}
+function matchDate(m) {
+  const s = m.startTime || m.start_time || m.startedAt;
+  if (!s) return null;
+  const d = new Date(s); return isNaN(d) ? null : d;
+}
+function mapLabel(key) {
+  if (!key) return '—';
+  return mapMeta[key.toLowerCase()] || mapMeta[key] || key;
+}
+function levelshotUrl(mapKey) {
+  const k = (mapKey || '').toLowerCase();
+  const ext = levelshotManifest[k];
+  return ext ? `${IMG_BASE}/${k}.${ext}` : null;
+}
+function fmtTime(ms) {
+  if (ms == null || ms === 0) return '—';
+  const n = typeof ms === 'string' ? parseFloat(ms) : ms;
+  if (isNaN(n) || n <= 0) return '—';
+  const totalSec = n / 1000;
+  const min = Math.floor(totalSec / 60);
+  const sec = (totalSec % 60).toFixed(3).padStart(6, '0');
+  return min > 0 ? `${min}:${sec}` : `${sec}s`;
+}
+function fmtDate(d) {
+  if (!d) return '—';
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' });
+}
+function fmtDateShort(d) {
+  if (!d) return '—';
+  const now = new Date();
+  const diffH = (now - d) / 3600000;
+  if (diffH < 1) return `${Math.round(diffH * 60)}m ago`;
+  if (diffH < 24) return `${Math.round(diffH)}h ago`;
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+}
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function getWinner(m) {
+  const players = (m.players || []).filter(p => !p.isBot);
+  if (!players.length) return null;
+  const mode = canonMode(m.mode || m.gametype || '');
+  if (RACE_MODES.has(mode)) {
+    const byLap = players.filter(p => p.bestLapMs > 0).sort((a,b) => a.bestLapMs - b.bestLapMs);
+    return byLap[0]?.name || players.sort((a,b) => (a.position||99)-(b.position||99))[0]?.name || null;
+  }
+  return players.sort((a,b) => (b.score||0)-(a.score||0))[0]?.name || null;
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+async function init() {
+  setupTabs();
+  await Promise.all([fetchMatches(), fetchMapMeta(), fetchLevelshots()]);
+  buildModeTabs();
+  renderLeaderboard();
+  renderActivity();
+  renderRankings();
+}
+
+async function fetchMatches() {
+  try {
+    const r = await fetch(`${API_BASE}/matches/index`);
+    const d = await r.json();
+    allMatches = d.matches || [];
+  } catch(e) { allMatches = []; }
+}
+async function fetchMapMeta() {
+  try { const r = await fetch(`${API_BASE}/maps/metadata`); const d = await r.json(); mapMeta = d.maps || {}; } catch(_) {}
+}
+async function fetchLevelshots() {
+  try { const r = await fetch(`${API_BASE}/maps/levelshots`); levelshotManifest = await r.json(); } catch(_) {}
+}
+
+// ── Header ────────────────────────────────────────────────────────────────────
+function updateHeader() {
+  const players = new Set(), modes = new Set();
+  let last = null;
+  for (const m of allMatches) {
+    const mode = canonMode(m.mode || m.gametype || '');
+    if (mode) modes.add(mode);
+    (m.players || []).forEach(p => p.name && players.add(p.name));
+    const d = matchDate(m);
+    if (d && (!last || d > last)) last = d;
+  }
+  const fmt = n => n.toLocaleString('de-DE');
+  document.getElementById('hs-matches').textContent = fmt(allMatches.length);
+  document.getElementById('hs-players').textContent = fmt(players.size);
+  document.getElementById('hs-modes').textContent = fmt(modes.size);
+  document.getElementById('hs-updated').textContent = last ? fmtDateShort(last) : '—';
+  document.getElementById('tb-matches').textContent = fmt(allMatches.length);
+  document.getElementById('tb-players').textContent = fmt(players.size);
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+function setupTabs() {
+  document.querySelectorAll('.main-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.main-tab').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+  document.querySelectorAll('.src-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.src-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeSrc = btn.dataset.src;
+      renderLeaderboard();
+    });
+  });
+}
+
+// ── Mode tabs ─────────────────────────────────────────────────────────────────
+function buildModeTabs() {
+  updateHeader();
+  const modeSet = new Set();
+  for (const m of allMatches) {
+    const mode = canonMode(m.mode || m.gametype || '');
+    if (mode) modeSet.add(mode);
+  }
+  const modes = [...modeSet];
+  if (!modes.length) return;
+  if (!activeMode) activeMode = modes[0];
+
+  const container = document.getElementById('mode-tabs');
+  container.innerHTML = '';
+  modes.forEach(mode => {
+    const btn = document.createElement('button');
+    btn.className = 'mode-tab' + (mode === activeMode ? ' active' : '');
+    btn.textContent = modeLabel(mode);
+    btn.dataset.mode = mode;
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeMode = mode;
+      activeMap = '';
+      renderLeaderboard();
+    });
+    container.appendChild(btn);
+  });
+}
+
+// ── Leaderboard ───────────────────────────────────────────────────────────────
+function getFiltered() {
+  return allMatches.filter(m => {
+    if (activeSrc === 'online' && m.source === 'offline') return false;
+    if (activeSrc === 'offline' && m.source !== 'offline') return false;
+    return true;
+  });
+}
+
+function renderLeaderboard() {
+  if (!activeMode) { document.getElementById('lb-status').textContent = 'No data.'; return; }
+  const filtered = getFiltered().filter(m => canonMode(m.mode || m.gametype || '') === activeMode);
+
+  const mapSet = new Set();
+  for (const m of filtered) { const map = m.map || ''; if (map) mapSet.add(map); }
+  const maps = [...mapSet].sort();
+  if (!maps.length) {
+    document.getElementById('lb-status').textContent = 'No matches for this mode.';
+    document.getElementById('lb-status').style.display = '';
+    document.getElementById('lb-table').hidden = true;
+    return;
+  }
+  if (!activeMap || !maps.includes(activeMap)) activeMap = maps[0];
+
+  // Map selector
+  const sel = document.getElementById('map-select');
+  sel.innerHTML = '';
+  maps.forEach(map => {
+    const opt = document.createElement('option');
+    opt.value = map;
+    opt.textContent = mapLabel(map);
+    if (map === activeMap) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  sel.onchange = () => { activeMap = sel.value; renderLeaderboard(); };
+
+  // Levelshot
+  const lsUrl = levelshotUrl(activeMap);
+  const lsDiv = document.getElementById('map-levelshot');
+  lsDiv.innerHTML = lsUrl ? `<img src="${lsUrl}" alt="${esc(activeMap)}" loading="lazy" />` : '';
+  document.getElementById('map-name').textContent = mapLabel(activeMap);
+
+  const isRace = RACE_MODES.has(activeMode);
+  const best = new Map();
+
+  for (const match of filtered) {
+    if ((match.map || '').toLowerCase() !== activeMap.toLowerCase()) continue;
+    const date = matchDate(match);
+    for (const p of (match.players || [])) {
+      const name = p.name || p.displayName || '';
+      if (!name) continue;
+      if (isRace) {
+        const lapMs = p.bestLapMs || p.totalRaceMs || 0;
+        if (!lapMs) continue;
+        const ex = best.get(name);
+        if (!ex || lapMs < ex.val) best.set(name, { val: lapMs, vehicle: p.vehicle||p.car||'—', date, matchId: match.matchId, isBot: !!p.isBot });
+      } else {
+        const score = p.score || p.rawScore || 0;
+        const ex = best.get(name);
+        if (!ex || score > ex.val) best.set(name, { val: score, kills: p.kills||0, deaths: p.deaths||0, vehicle: p.vehicle||p.car||'—', date, matchId: match.matchId, isBot: !!p.isBot });
+      }
+    }
+  }
+
+  let entries = [...best.entries()].map(([name, d]) => ({ name, ...d }));
+  entries.sort((a,b) => isRace ? a.val - b.val : b.val - a.val);
+  entries = entries.slice(0,10);
+
+  document.getElementById('lb-status').style.display = 'none';
+  const table = document.getElementById('lb-table');
+  table.hidden = false;
+  document.getElementById('lb-col3').textContent = isRace ? 'BEST LAP' : 'SCORE';
+
+  const tbody = document.getElementById('lb-body');
+  tbody.innerHTML = entries.map((e,i) => `
+    <tr class="rank-${i+1}">
+      <td class="td-rank">${i+1}</td>
+      <td><span class="player-link" data-player="${esc(e.name)}" data-player-id="${esc(e.playerId||'')}">${esc(e.name)}</span>${e.isBot ? ' <span class="bot-badge">BOT</span>' : ''}</td>
+      <td>${isRace ? fmtTime(e.val) : e.val}</td>
+      <td>${esc(e.vehicle)}</td>
+      <td>${fmtDate(e.date)}</td>
+    </tr>
+  `).join('');
+
+  tbody.querySelectorAll('.player-link').forEach(el =>
+    el.addEventListener('click', () => openProfile(el.dataset.playerId || el.dataset.player, el.dataset.player))
+  );
+}
+
+// ── Recent Activity ───────────────────────────────────────────────────────────
+function renderActivity() {
+  const sorted = [...allMatches].sort((a,b) => {
+    const da = matchDate(a), db = matchDate(b);
+    if (!da && !db) return 0; if (!da) return 1; if (!db) return -1;
+    return db - da;
+  });
+  const recent = sorted.slice(0, 15);
+
+  const feed = document.getElementById('activity-feed');
+  if (!recent.length) { feed.innerHTML = '<div class="lb-status">No matches yet.</div>'; return; }
+
+  feed.innerHTML = recent.map(m => {
+    const mode = canonMode(m.mode || m.gametype || '');
+    const map = m.map || '';
+    const date = matchDate(m);
+    const winner = getWinner(m);
+    const humanPlayers = (m.players || []).filter(p => !p.isBot);
+    const names = humanPlayers.slice(0,4).map(p => esc(p.name||'')).join(', ')
+      + (humanPlayers.length > 4 ? ` +${humanPlayers.length-4}` : '');
+    const srcClass = m.source === 'offline' ? 'src-offline' : 'src-online';
+    const srcLabel = m.source === 'offline' ? 'offline' : 'online';
+    const server = m.serverName || '';
+
+    return `<div class="activity-card" data-match-id="${esc(m.matchId||'')}">
+      <div class="activity-card-left">
+        <div class="activity-mode">${esc(mode ? modeLabel(mode) : '—')}</div>
+        <div class="activity-map">${esc(mapLabel(map) || map || '—')}</div>
+        ${winner ? `<div class="activity-winner">Winner: <span>${esc(winner)}</span></div>` : ''}
+        <div class="activity-players">${names}</div>
+      </div>
+      <div class="activity-card-right">
+        <div class="activity-date">${fmtDateShort(date)}</div>
+        ${server ? `<div class="activity-server">${esc(server)}</div>` : ''}
+        <div><span class="activity-source ${srcClass}">${srcLabel}</span></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  feed.querySelectorAll('.activity-card').forEach(card => {
+    card.addEventListener('click', () => openMatch(card.dataset.matchId));
+  });
+}
+
+// ── Player Rankings ───────────────────────────────────────────────────────────
+const TEAM_MODES = new Set([
+  'GT_TEAM','GT_TEAM_RACING','GT_TEAM_RACING_DM',
+  'GT_CTF','GT_CTF4','GT_DOMINATION','GT_KOTH'
+]);
+
+function buildPlayerStats() {
+  const map = new Map();
+  for (const m of allMatches) {
+    const mode = canonMode(m.mode || m.gametype || '');
+    const isRace = RACE_MODES.has(mode);
+    const isTeamMode = TEAM_MODES.has(mode);
+    const players = (m.players || []).filter(p => p.name);
+
+    // Use server-provided winner from index (most accurate).
+    // For team modes: winnerTeam (int) → all players with p.team === winnerTeam get a win.
+    // For individual modes: winner (string) → named player gets a win.
+    // Fall back to stat-derived winner for legacy index entries that lack these fields.
+    let winnerName = m.winner || null;
+    const winnerTeam = m.winnerTeam || 0;
+
+    if (!winnerName && !isTeamMode) {
+      if (isRace) {
+        const byLap = players.filter(p => (p.bestLapMs || 0) > 0).sort((a,b) => a.bestLapMs - b.bestLapMs);
+        winnerName = byLap[0]?.name
+          || [...players].sort((a,b) => (a.position||99)-(b.position||99))[0]?.name
+          || null;
+      } else {
+        winnerName = [...players].sort((a,b) => (b.score||0)-(a.score||0))[0]?.name || null;
+      }
+    }
+
+    for (const p of players) {
+      const name = p.name;
+      if (!map.has(name)) map.set(name, { name, playerId: p.playerId || '', wins:0, matches:0, kills:0, deaths:0, bestLapMs:0, isBot: !!p.isBot, achievementTiers: null, playerScore: 0 });
+      const s = map.get(name);
+      s.matches++;
+      s.kills += p.kills || 0;
+      s.deaths += p.deaths || 0;
+      // Keep the first non-empty playerId seen for this name
+      if (!s.playerId && p.playerId) s.playerId = p.playerId;
+      const isWinner = isTeamMode
+        ? (winnerTeam > 0 && p.team === winnerTeam)
+        : (winnerName && name === winnerName);
+      if (isWinner) s.wins++;
+      const lap = p.bestLapMs || p.totalRaceMs || 0;
+      if (lap > 0 && (s.bestLapMs === 0 || lap < s.bestLapMs)) s.bestLapMs = lap;
+      const tiers = p.achievementTiers;
+      if (Array.isArray(tiers) && tiers.length > 0) s.achievementTiers = tiers;
+      const score = p.playerScore ?? 0;
+      if (score > s.playerScore) s.playerScore = score;
+    }
+  }
+  return [...map.values()];
+}
+
+function renderRankings() {
+  let players = buildPlayerStats();
+  if (rankingsSearch) players = players.filter(p => p.name.toLowerCase().includes(rankingsSearch));
+
+  players.sort((a,b) => {
+    if (rankingsSort === 'wins')    return b.wins - a.wins || b.matches - a.matches;
+    if (rankingsSort === 'matches') return b.matches - a.matches;
+    if (rankingsSort === 'kills')   return b.kills - a.kills;
+    if (rankingsSort === 'kd') {
+      const kdA = a.deaths ? a.kills / a.deaths : a.kills;
+      const kdB = b.deaths ? b.kills / b.deaths : b.kills;
+      return kdB - kdA;
+    }
+    return 0;
+  });
+
+  const tbody = document.getElementById('rankings-body');
+  if (!players.length) { tbody.innerHTML = `<tr><td colspan="8" style="padding:40px 80px;color:var(--gray)">No players found.</td></tr>`; return; }
+
+  tbody.innerHTML = players.map((p, i) => {
+    const kd = p.deaths ? (p.kills / p.deaths).toFixed(2) : p.kills.toFixed(2);
+    const kdClass = parseFloat(kd) >= 1 ? 'kd-positive' : '';
+    const rankName = rankNameFromScore(p.playerScore ?? 0);
+    return `<tr data-player="${esc(p.name)}" data-player-id="${esc(p.playerId||'')}">
+      <td class="td-rank">${i+1}</td>
+      <td>
+        <div class="td-player-name">${esc(p.name)}${p.isBot ? ' <span class="bot-badge">BOT</span>' : ''}</div>
+        <div class="td-player-rank">${rankName}</div>
+      </td>
+      <td class="td-highlight">${p.wins}</td>
+      <td>${p.matches}</td>
+      <td>${p.kills}</td>
+      <td>${p.deaths}</td>
+      <td class="${kdClass}">${kd}</td>
+      <td>${p.bestLapMs ? fmtTime(p.bestLapMs) : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  tbody.querySelectorAll('tr').forEach(row => {
+    row.addEventListener('click', () => openProfile(row.dataset.playerId || row.dataset.player, row.dataset.player));
+  });
+}
+
+// Sort + search controls
+document.getElementById('rankings-search').addEventListener('input', e => {
+  rankingsSearch = e.target.value.toLowerCase();
+  renderRankings();
+});
+document.querySelectorAll('.sort-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    rankingsSort = btn.dataset.sort;
+    renderRankings();
+  });
+});
+
+// ── Profile modal ─────────────────────────────────────────────────────────────
+// playerId = UUID for API lookup; name = display name for fallback
+async function openProfile(playerId, name) {
+  if (!name) name = playerId; // backwards-compat when called with name only
+  openModal('profile-modal');
+  const content = document.getElementById('profile-content');
+  content.innerHTML = '<div class="lb-status">Loading…</div>';
+  try {
+    // Use UUID if available, otherwise fall back to display name —
+    // PHP will scan profiles by cleanName when no UUID file matches.
+    const lookupKey = playerId || name;
+    if (!lookupKey) throw new Error('no id');
+    const r = await fetch(`${API_BASE}/players/${encodeURIComponent(lookupKey)}`);
+    if (!r.ok) throw new Error('not found');
+    const p = await r.json();
+    content.innerHTML = buildProfileHTML(p);
+  } catch(_) {
+    // Build from local match data
+    const stats = buildPlayerStats().find(p => p.name.toLowerCase() === name.toLowerCase());
+    if (stats) {
+      content.innerHTML = buildSimpleProfile(stats);
+    } else {
+      content.innerHTML = `<div class="lb-status">No profile found for "${esc(name)}".</div>`;
+    }
+  }
+}
+
+const ACHIEVEMENTS = [
+  { name: 'Distance Driven', icon: 'road' },
+  { name: 'Kills',           icon: 'skull' },
+  { name: 'Races Won',       icon: 'trophy' },
+  { name: 'Sprint Wins',     icon: 'bolt' },
+  { name: 'Flags Captured',  icon: 'flag' },
+  { name: 'Flag Assists',    icon: 'flag-2' },
+  { name: 'Fuel Consumed',   icon: 'gas-station' },
+  { name: 'Accuracy',        icon: 'target' },
+  { name: 'Excellent',       icon: 'star' },
+  { name: 'Impressive',      icon: 'award' },
+  { name: 'Perfect',         icon: 'crown' },
+];
+const ACHIEVEMENT_MAX = 8;
+
+function buildAchievementsHTML(tiers) {
+  if (!tiers || !tiers.length) return '';
+  const rows = ACHIEVEMENTS.map((a, i) => {
+    const tier = tiers[i] ?? 0;
+    const pct = Math.round((tier / ACHIEVEMENT_MAX) * 100);
+    const locked = tier === 0;
+    const color = locked ? '#333' : (i % 3 === 0 ? '#00bcd4' : i % 3 === 1 ? 'var(--orange)' : '#a855f7');
+    return `<div class="ach-row${locked ? ' ach-locked' : ''}">
+      <div class="ach-icon">
+        <svg viewBox="0 0 32 32" width="26" height="26">
+          <circle cx="16" cy="16" r="12" fill="none" stroke="#2a2a2a" stroke-width="2.5"/>
+          ${!locked ? `<circle cx="16" cy="16" r="12" fill="none" stroke="${color}" stroke-width="2.5"
+            stroke-dasharray="${Math.round(pct * 0.754)} 100"
+            stroke-linecap="round" transform="rotate(-90 16 16)"/>` : ''}
+        </svg>
+      </div>
+      <div class="ach-mid">
+        <div class="ach-name">${locked ? 'Locked' : a.name}</div>
+        <div class="ach-bar"><div class="ach-fill" style="width:${pct}%;background:${color};"></div></div>
+      </div>
+      <div class="ach-tier">${locked ? '<span class="ach-locked-label">—</span>' : `<span class="ach-tier-val">${tier}</span><span class="ach-tier-max">/${ACHIEVEMENT_MAX}</span>`}</div>
+    </div>`;
+  }).join('');
+  return `<div class="pc-section">ACHIEVEMENTS</div><div class="ach-list">${rows}</div>`;
+}
+
+function buildSimpleProfile(s) {
+  const kd = s.deaths ? (s.kills/s.deaths).toFixed(2) : s.kills.toFixed(2);
+  const rankName = rankNameFromScore(s.playerScore ?? 0);
+  return `<div class="pc-name">${esc(s.name)}</div>
+  <div class="pc-rank-bar">
+    <span class="pc-rank-name">${rankName}</span>
+    ${s.playerScore ? `<span class="pc-score">SCORE ${s.playerScore}</span>` : ''}
+  </div>
+  <div class="pc-section">CAREER STATS</div>
+  <div class="pc-grid">
+    <div class="pc-stat"><div class="pc-stat-label">Wins</div><div class="pc-stat-val">${s.wins}</div></div>
+    <div class="pc-stat"><div class="pc-stat-label">Matches</div><div class="pc-stat-val">${s.matches}</div></div>
+    <div class="pc-stat"><div class="pc-stat-label">Kills</div><div class="pc-stat-val">${s.kills}</div></div>
+    <div class="pc-stat"><div class="pc-stat-label">Deaths</div><div class="pc-stat-val">${s.deaths}</div></div>
+    <div class="pc-stat"><div class="pc-stat-label">K/D</div><div class="pc-stat-val">${kd}</div></div>
+    ${s.bestLapMs ? `<div class="pc-stat"><div class="pc-stat-label">Best Lap</div><div class="pc-stat-val">${fmtTime(s.bestLapMs)}</div></div>` : ''}
+  </div>
+  ${buildAchievementsHTML(s.achievementTiers)}`;
+}
+
+function buildProfileHTML(p) {
+  // Profile JSON is flat — no careerStats/career sub-object.
+  // Fall back to p itself so all root-level fields are accessible.
+  const career = p.careerStats || p.career || p;
+  const modeStats = p.modeStats || p.modes || {};
+  const playerScore = p.playerScore ?? p.score ?? p.totalScore ?? 0;
+  const rankName = p.rankName
+    || (p.currentRank != null ? RANK_NAMES[Math.min(p.currentRank, RANK_NAMES.length - 1)] : null)
+    || rankNameFromScore(playerScore);
+  const score = playerScore || '—';
+  const sv = v => (v != null && v !== '') ? v : '—';
+
+  // Compute K/D from root fields (not stored pre-computed in profile JSON)
+  const kd = (() => {
+    const k = career.kills ?? 0;
+    const d = career.deaths ?? 0;
+    if (!k && !d) return null;
+    if (!d) return k + '/0';
+    return (k / d).toFixed(2);
+  })();
+
+  const stats = [
+    ['Wins', career.wins], ['Losses', career.losses],
+    ['Kills', career.kills], ['Deaths', career.deaths],
+    ['K/D', kd], ['Games', career.gamesPlayed],
+    // PHP stores bestLapMs (already in ms), distanceKm, topSpeedKph, fuelUsed
+    ['Best Lap', career.bestLapMs ? fmtTime(career.bestLapMs) : null],
+    ['Distance', career.distanceKm ? (Math.round(career.distanceKm * 10) / 10) + ' km' : null],
+    ['Top Speed', career.topSpeedKph ? (Math.round(career.topSpeedKph * 10) / 10) + ' km/h' : null],
+    ['Fuel Used', career.fuelUsed ? (Math.round(career.fuelUsed * 10) / 10) + ' L' : null],
+    ['Most Used', career.mostUsedVehicle],
+    ['Flag Caps', career.flagCaptures || null], ['Flag Assists', career.flagAssists || null],
+    ['Dmg Dealt', career.damageDealt || null], ['Dmg Taken', career.damageTaken || null],
+  ].map(([label, val]) =>
+    `<div class="pc-stat"><div class="pc-stat-label">${label}</div><div class="pc-stat-val">${sv(val)}</div></div>`
+  ).join('');
+
+  const modes = Object.entries(modeStats).map(([key, ms]) => {
+    const isRace = RACE_MODES.has(key);
+    const third = isRace ? ['Best Lap', ms.bestTime ? fmtTime(ms.bestTime) : null]
+                         : ['Kills', ms.kills];
+    return `<div class="pc-mode">
+      <div class="pc-mode-name">${modeLabel(key)}</div>
+      <div class="pc-mode-stats">
+        <div><div class="pc-ms-label">Wins</div><div class="pc-ms-val">${sv(ms.wins)}</div></div>
+        <div><div class="pc-ms-label">Played</div><div class="pc-ms-val">${sv(ms.completed||ms.played)}</div></div>
+        <div><div class="pc-ms-label">${third[0]}</div><div class="pc-ms-val">${sv(third[1])}</div></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const tiers = p.achievementTiers || career.achievementTiers || [];
+
+  return `<div class="pc-name">${esc(p.displayName||p.cleanName||p.name||p.playerId||'—')}</div>
+  <div class="pc-rank-bar">
+    <span class="pc-rank-name">${rankName}</span>
+    <span class="pc-score">SCORE ${score}</span>
+  </div>
+  <div class="pc-section">CAREER STATS</div>
+  <div class="pc-grid">${stats}</div>
+  ${modes ? `<div class="pc-section">MODE STATS</div><div class="pc-mode-grid">${modes}</div>` : ''}
+  ${buildAchievementsHTML(tiers)}`;
+}
+
+// ── Match modal ───────────────────────────────────────────────────────────────
+async function openMatch(matchId) {
+  if (!matchId) return;
+  openModal('match-modal');
+  const content = document.getElementById('match-content');
+  content.innerHTML = '<div class="lb-status">Loading…</div>';
+  try {
+    const r = await fetch(`${API_BASE}/matches/${encodeURIComponent(matchId)}`);
+    if (!r.ok) throw new Error('not found');
+    const m = await r.json();
+    const mode = canonMode(m.mode || m.gametype || '');
+    const isRace = RACE_MODES.has(mode);
+    const map = m.map || '';
+    const date = matchDate(m);
+    const players = [...(m.players||[])].sort((a,b) => {
+      if (isRace) { const ta = a.bestLapMs||a.totalRaceMs||99999999, tb = b.bestLapMs||b.totalRaceMs||99999999; return ta-tb; }
+      return (b.score||0)-(a.score||0);
+    });
+    const rows = players.map((p,i) => `<tr>
+      <td>${i+1}</td>
+      <td class="md-player-link" data-player="${esc(p.name||'')}" data-player-id="${esc(p.playerId||'')}">${esc(p.name||'—')}${p.isBot?' <span style="color:#444;font-size:9px">BOT</span>':''}</td>
+      <td>${isRace ? fmtTime(p.bestLapMs||p.totalRaceMs||0) : (p.score||0)}</td>
+      <td>${p.kills||0}</td><td>${p.deaths||0}</td>
+      <td>${esc(p.vehicle||'—')}</td>
+    </tr>`).join('');
+    content.innerHTML = `<div class="md-header">
+      <div class="md-mode">${esc(mode ? modeLabel(mode) : '—')}</div>
+      <div class="md-map">${esc(mapLabel(map)||map||'—')}</div>
+      <div class="md-meta">
+        <span>${fmtDate(date)}</span>
+        ${m.serverName ? `<span>${esc(m.serverName)}</span>` : ''}
+        <span style="color:#333;font-size:9px">${esc(matchId)}</span>
+      </div>
+    </div>
+    <table class="md-table">
+      <thead><tr><th>#</th><th>PLAYER</th><th>${isRace?'BEST LAP':'SCORE'}</th><th>K</th><th>D</th><th>VEHICLE</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+    content.querySelectorAll('.md-player-link').forEach(el => {
+      el.addEventListener('click', () => { closeModal('match-modal'); openProfile(el.dataset.playerId || el.dataset.player, el.dataset.player); });
+    });
+  } catch(_) {
+    content.innerHTML = '<div class="lb-status">Could not load match.</div>';
+  }
+}
+
+// ── Modal helpers ─────────────────────────────────────────────────────────────
+function openModal(id) {
+  document.getElementById(id).setAttribute('aria-hidden','false');
+  document.body.style.overflow = 'hidden';
+}
+function closeModal(id) {
+  document.getElementById(id).setAttribute('aria-hidden','true');
+  document.body.style.overflow = '';
+}
+
+document.querySelectorAll('.modal-close').forEach(btn => {
+  btn.addEventListener('click', () => closeModal(btn.closest('.modal').id));
+});
+document.querySelectorAll('.modal-backdrop').forEach(bd => {
+  bd.addEventListener('click', () => closeModal(bd.closest('.modal').id));
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeModal('profile-modal'); closeModal('match-modal'); }
+});
+
+// ── Ghost rankings (tab GHOSTS) ───────────────────────────────────────────────
+// GET /ghosts/catalog → maps / track variants / map builds / vehicles,
+// GET /ghosts?map=&tl=&rev=&physics=&checksum=[&vehicle=] → ranking.
+const GH_LENGTHS = ['Short', 'Medium', 'Long'];
+const gh = { catalog: null, loading: false, error: '', map: '', variant: '', bucket: '', vehicle: '', lists: new Map() };
+
+function ghVariantLabel(v) {
+  return (GH_LENGTHS[v.trackLength] || 'Medium') + (v.trackReversed ? ' · Reversed' : '');
+}
+function ghMap() { return (gh.catalog || []).find(m => m.map === gh.map) || null; }
+function ghVariant() { const m = ghMap(); return m ? (m.variants.find(v => v.variant === gh.variant) || null) : null; }
+function ghBucket() { const v = ghVariant(); return v ? (v.buckets.find(b => b.bucket === gh.bucket) || null) : null; }
+function ghNormalize() {
+  const maps = gh.catalog || [];
+  if (!maps.some(m => m.map === gh.map)) gh.map = maps.length ? maps[0].map : '';
+  const m = ghMap();
+  const variants = m ? m.variants : [];
+  if (!variants.some(v => v.variant === gh.variant)) {
+    const most = [...variants].sort((a, b) => b.count - a.count)[0];
+    gh.variant = most ? most.variant : '';
+  }
+  const v = ghVariant();
+  const buckets = v ? v.buckets : [];
+  if (!buckets.some(b => b.bucket === gh.bucket)) gh.bucket = buckets.length ? buckets[0].bucket : '';  // current build first
+  const b = ghBucket();
+  if (gh.vehicle && !(b && b.vehicles[gh.vehicle])) gh.vehicle = '';
+}
+function ghFill(sel, options, value) {
+  sel.innerHTML = options.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+  sel.value = value;
+  sel.onchange = () => { gh[sel.dataset.key] = sel.value; ghNormalize(); renderGhosts(); };
+}
+function ghStatus(text) {
+  const st = document.getElementById('gh-status');
+  st.textContent = text;
+  st.style.display = '';
+  document.getElementById('gh-table').hidden = true;
+}
+async function loadGhostCatalog() {
+  if (gh.catalog || gh.loading) return;
+  gh.loading = true;
+  ghStatus('Loading…');
+  try {
+    const r = await fetch(`${API_BASE}/ghosts/catalog`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    gh.catalog = Array.isArray(d.maps) ? d.maps : [];
+  } catch (e) {
+    gh.error = 'Could not load ghosts.';
+  }
+  gh.loading = false;
+  ghNormalize();
+  renderGhosts();
+}
+function ghListKey() { return [gh.map, gh.variant, gh.bucket, gh.vehicle].join('|'); }
+async function loadGhostList() {
+  const key = ghListKey(), v = ghVariant(), b = ghBucket();
+  if (!v || !b || gh.lists.has(key)) return;
+  gh.lists.set(key, { loading: true, ghosts: [] });
+  const q = new URLSearchParams({ map: gh.map, tl: v.trackLength, rev: v.trackReversed,
+    physics: b.physicsVersion, checksum: b.mapChecksum, limit: 100 });
+  if (gh.vehicle) q.set('vehicle', gh.vehicle);
+  try {
+    const r = await fetch(`${API_BASE}/ghosts?${q}`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    gh.lists.set(key, { loading: false, ghosts: d.ghosts || [] });
+  } catch (e) {
+    gh.lists.set(key, { loading: false, ghosts: [], error: true });
+  }
+  if (ghListKey() === key) renderGhosts();
+}
+function renderGhosts() {
+  if (!gh.catalog) { ghStatus(gh.error || 'Loading…'); return; }
+  const maps = gh.catalog, m = ghMap(), v = ghVariant(), b = ghBucket();
+  const mapSel = document.getElementById('gh-map'), varSel = document.getElementById('gh-variant'), buildSel = document.getElementById('gh-build');
+  mapSel.dataset.key = 'map'; varSel.dataset.key = 'variant'; buildSel.dataset.key = 'bucket';
+  ghFill(mapSel, maps.map(x => ({ value: x.map, label: mapLabel(x.map) })), gh.map);
+  ghFill(varSel, (m ? m.variants : []).map(x => ({ value: x.variant, label: `${ghVariantLabel(x)} (${x.count})` })), gh.variant);
+  const buckets = v ? v.buckets : [];
+  ghFill(buildSel, buckets.map((x, i) => ({ value: x.bucket,
+    label: i === 0 ? 'Current'
+                   : `Older · ${fmtDateShort(x.lastReceivedAt ? new Date(x.lastReceivedAt) : null)}`,
+    })), gh.bucket);
+  document.getElementById('gh-build-wrap').hidden = buckets.length < 2;
+
+  // Vehicle filter in the toolbar, like the game mode tabs
+  const tabs = document.getElementById('gh-vehicle-tabs');
+  const vehicles = b ? Object.keys(b.vehicles) : [];
+  tabs.innerHTML = [['', 'All vehicles', b ? b.count : 0], ...vehicles.map(x => [x, x, b.vehicles[x]])]
+    .map(([key, label, n]) => `<button class="mode-tab${key === gh.vehicle ? ' active' : ''}" data-vehicle="${esc(key)}">${esc(label)} (${n})</button>`).join('');
+  tabs.querySelectorAll('.mode-tab').forEach(btn => btn.addEventListener('click', () => {
+    gh.vehicle = btn.dataset.vehicle; renderGhosts();
+  }));
+
+  const lsUrl = m ? levelshotUrl(m.map) : null;
+  document.getElementById('gh-levelshot').innerHTML = lsUrl ? `<img src="${lsUrl}" alt="${esc(m.map)}" loading="lazy" />` : '';
+  document.getElementById('gh-map-name').textContent = m ? mapLabel(m.map) : '';
+
+  if (!maps.length || !b) { ghStatus('No ghosts yet.'); return; }
+  const list = gh.lists.get(ghListKey());
+  if (!list) loadGhostList();
+  if (!list || list.loading) { ghStatus('Loading…'); return; }
+  if (list.error) { ghStatus('Could not load ghosts.'); return; }
+  if (!list.ghosts.length) { ghStatus('No ghosts for this selection yet.'); return; }
+
+  document.getElementById('gh-status').style.display = 'none';
+  document.getElementById('gh-table').hidden = false;
+  const best = list.ghosts[0].lapMs;
+  const tbody = document.getElementById('gh-body');
+  tbody.innerHTML = list.ghosts.map((g, i) => `
+    <tr class="rank-${i + 1}">
+      <td class="td-rank">${i + 1}</td>
+      <td><span class="player-link" data-player="${esc(g.playerName || '')}" data-player-id="${esc(g.playerId || '')}">${esc(g.playerName || '—')}</span></td>
+      <td>${fmtTime(g.lapMs)}</td>
+      <td class="gh-gap">${i === 0 ? '—' : '+' + ((g.lapMs - best) / 1000).toFixed(3)}</td>
+      <td>${esc(g.vehicle || '—')}</td>
+      <td>${fmtDateShort(g.receivedAt ? new Date(g.receivedAt) : null)}</td>
+      <td><a class="gh-dl" href="${API_BASE}/ghosts/${encodeURIComponent(g.ghostId)}?format=raw&download=1" title="Download ghost file">.ghost</a></td>
+    </tr>`).join('');
+  tbody.querySelectorAll('.player-link').forEach(el =>
+    el.addEventListener('click', () => openProfile(el.dataset.playerId || el.dataset.player, el.dataset.player))
+  );
+}
+document.querySelector('.main-tab[data-tab="ghosts"]').addEventListener('click', () => {
+  if (location.hash !== '#ghosts') history.replaceState(null, '', '#ghosts');
+  if (gh.catalog) renderGhosts(); else loadGhostCatalog();
+});
+
+// init() registers the tab handlers synchronously before its first await.
+const ladderReady = init();
+// Deep link: www.q3rally.com/ladder/#ghosts
+if (location.hash === '#ghosts') {
+  document.querySelector('.main-tab[data-tab="ghosts"]').click();
+}
+// Map names and levelshots arrive with init(); refresh the ghost tab then.
+ladderReady.then(() => { if (gh.catalog) renderGhosts(); });
+</script>

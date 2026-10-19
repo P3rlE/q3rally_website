@@ -1,0 +1,512 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Nav from '../components/Nav.astro';
+import { getLatestBuild, getNewsPosts, getCounts, getCars, getMaps, getScreenshots, getCurrentBuilds, urlFor } from '../lib/sanity.js';
+
+const b = import.meta.env.BASE_URL.replace(/\/$/, '');
+const build = await getLatestBuild();
+const news = await getNewsPosts();
+const counts = await getCounts();
+const cars = await getCars();
+const maps = await getMaps();
+const screenshots = await getScreenshots();
+const currentBuilds = await getCurrentBuilds();
+const featuredCar = cars.length > 0 ? cars[Math.floor(Math.random() * cars.length)] : null;
+const featuredMap = maps.length > 0 ? maps[Math.floor(Math.random() * maps.length)] : null;
+const featuredShot = screenshots.length > 0 ? screenshots[Math.floor(Math.random() * screenshots.length)] : null;
+
+const releaseDate = build?.publishedAt
+  ? new Date(build.publishedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  : '—';
+
+const latestNews = news.slice(0, 2);
+const tickerNews = news.slice(0, 10);
+
+function formatDate(dateStr: string) {
+  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function getExcerpt(body: any[], maxLen = 200) {
+  if (!body?.length) return '';
+  const firstBlock = body.find((b: any) => b._type === 'block');
+  if (!firstBlock) return '';
+  const text = firstBlock.children?.map((c: any) => c.text ?? '').join('') ?? '';
+  return text.length > maxLen ? text.slice(0, maxLen) + '…' : text;
+}
+
+const winPlatform = build?.platforms?.find(p => p.name === 'Windows');
+---
+<BaseLayout>
+  <!-- TOP BAR -->
+  <div slot="topbar" class="top-bar">
+    <div class="top-bar-left">
+      <div class="live-dot"></div>
+      <span>
+        <b>BUILD {build?.version ?? '—'}</b>
+        &nbsp;·&nbsp; LIVE
+        &nbsp;·&nbsp; <b>{counts.cars} VEHICLES</b>
+        &nbsp;·&nbsp; <b>{counts.maps} MAPS</b>
+        &nbsp;·&nbsp; <b>{counts.powerups} POWERUPS</b>
+        &nbsp;·&nbsp; <b>{counts.weapons} WEAPONS</b>
+        &nbsp;·&nbsp; <b>{counts.roadside} ROADSIDE</b>
+      </span>
+    </div>
+    <div class="top-bar-right">
+      <span class="hl">FREE</span>
+      <span>·</span>
+      <span>OPEN SOURCE</span>
+      <span>·</span>
+      <span>GPL v2</span>
+    </div>
+  </div>
+
+  <Nav slot="nav" build={build} />
+
+  <!-- HERO -->
+  <section class="hero" id="game">
+    <div class="hero-left">
+      <div class="section-label"><span>01</span> / 04 &nbsp; THE GAME</div>
+      <h1 class="hero-headline">
+        IT'S DAMN<br>
+        <span class="orange">FAST,</span> BABY.
+      </h1>
+      <p class="hero-sub">
+        A free, open-source arcade rally racer built on the ioquake3 engine.
+        Twenty+ years of community-built cars, maps, weapons and modes —
+        packaged into one absurdly fast game.
+      </p>
+      <div class="hero-buttons">
+        <a href={`${b}/downloads`} class="btn-primary">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="white" fill="none" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>DOWNLOAD V{build?.version ?? '—'}<br /><small>WIN · LINUX · {winPlatform?.size ?? ''}</small></span>
+        </a>
+        <a href={`${b}/media`} class="btn-secondary">
+          <svg viewBox="0 0 10 12" width="14" height="14" fill="white"><polygon points="0,0 10,6 0,12"/></svg>
+          WATCH TRAILER
+        </a>
+      </div>
+    </div>
+
+    <div class="hero-cards">
+      <!-- Random Vehicle Card -->
+      {featuredCar && (
+        <div class="hero-card car-card">
+          <div class="card-corner-br"></div>
+          <div class="card-label">Random Vehicle</div>
+          <div class="car-img-wrap">
+            {featuredCar.image
+              ? <img src={urlFor(featuredCar.image).width(600).fit('max').auto('format').url()} alt={featuredCar.name} />
+              : <div class="car-img-placeholder">[ IMAGE ]</div>
+            }
+          </div>
+          <div class="car-name">{featuredCar.name}</div>
+          <a href={`${b}/cars`} class="card-link">VIEW ALL CARS →</a>
+        </div>
+      )}
+
+      <!-- Latest Build Card -->
+      {build && (
+        <div class="hero-card build-card">
+          <div class="card-corner-br"></div>
+          <div class="card-label">Latest Build</div>
+          <div class="build-version">
+            {build.version.split('.').slice(0,2).join('.')}
+            <span>.{build.version.split('.').slice(2).join('.')}</span>
+          </div>
+          <div class="build-rows">
+            <div class="build-row"><span class="key">Released</span><span class="val">{releaseDate}</span></div>
+            <div class="build-row"><span class="key">Size</span><span class="val">{winPlatform?.size ?? '—'}</span></div>
+            <div class="build-row"><span class="key">Platforms</span><span class="val">WIN · LIN · MAC</span></div>
+            <div class="build-row"><span class="key">License</span><span class="val">GPL-2.0</span></div>
+          </div>
+        </div>
+      )}
+
+      <!-- Random Map Card -->
+      {featuredMap && (
+        <div class="hero-card map-card">
+          <div class="card-corner-br"></div>
+          <div class="card-label">Random Map</div>
+          <div class="car-img-wrap">
+            {featuredMap.mainImage
+              ? <img src={urlFor(featuredMap.mainImage).width(600).fit('max').auto('format').url()} alt={featuredMap.name} />
+              : <div class="car-img-placeholder">[ IMAGE ]</div>
+            }
+          </div>
+          <div class="car-name">{featuredMap.name}</div>
+          <a href={`${b}/maps`} class="card-link">VIEW ALL MAPS →</a>
+        </div>
+      )}
+
+      <!-- Random Screenshot Card -->
+      {featuredShot && (
+        <div class="hero-card shot-card">
+          <div class="card-corner-br"></div>
+          <div class="card-label">Screenshot</div>
+          <div class="shot-img-wrap">
+            <img src={urlFor(featuredShot.image).width(600).fit('max').auto('format').url()} alt={featuredShot.caption ?? 'Screenshot'} />
+          </div>
+          {featuredShot.caption && <div class="shot-caption-text">{featuredShot.caption}</div>}
+          <a href={`${b}/media`} class="card-link">VIEW ALL MEDIA →</a>
+        </div>
+      )}
+    </div>
+  </section>
+
+  <!-- STATS STRIP -->
+  <div class="stats-strip">
+    <div class="stat-block stat-block-live">
+      <div class="stat-dot pulse"></div>
+      <div><div class="stat-num" id="stat-online">—</div><div class="stat-label">Online Now</div></div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-dot static"></div>
+      <div><div class="stat-num" id="stat-visitors">—</div><div class="stat-label">Total Visitors</div></div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-dot static"></div>
+      <div><div class="stat-num" id="stat-pageviews">—</div><div class="stat-label">Total Views</div></div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-dot static"></div>
+      <div><div class="stat-num" id="stat-downloads">—</div><div class="stat-label">Total Downloads</div></div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-dot static"></div>
+      <div><div class="stat-num" id="stat-today">—</div><div class="stat-label">Visitors Today</div></div>
+    </div>
+  </div>
+
+  <!-- NEWS TICKER -->
+  {tickerNews.length > 0 && (
+    <div class="ticker-wrap">
+      <div class="ticker-track">
+        {[...tickerNews, ...tickerNews].map(post => (
+          <div class="ticker-item">
+            <b>{post.title}</b>
+            <span class="ticker-sep">+</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )}
+
+  <!-- NEWS -->
+  {latestNews.length > 0 && (
+    <section class="section-news" id="news">
+      <div class="news-header">
+        <div>
+          <div class="section-label"><span>02</span> / 04 &nbsp; NEWS</div>
+          <h2 class="section-headline">LATEST<br>UPDATES.</h2>
+        </div>
+        <a href={`${b}/news`} class="news-all-link">ALL NEWS →</a>
+      </div>
+      <div class="news-cards">
+        {latestNews.map(post => (
+          <div class="news-card">
+            <div class="news-card-corner-br"></div>
+            <div class="news-date">{formatDate(post.publishedAt)}</div>
+            <div class="news-title">{post.title}</div>
+            <div class="news-excerpt">{getExcerpt(post.body)}</div>
+            <a href={`${b}/news`} class="card-link">READ MORE →</a>
+          </div>
+        ))}
+      </div>
+    </section>
+  )}
+
+  <!-- ABOUT -->
+  <section class="section-about" id="about">
+    <div>
+      <div class="section-label"><span>03</span> / 04 &nbsp; ABOUT THE PROJECT</div>
+      <h2 class="section-headline">WHAT'S<br>UNDER<br>THE HOOD.</h2>
+    </div>
+    <div class="about-right">
+      <p class="about-desc">
+        Q3Rally takes the deranged speed of <a href="https://ioquake3.org" target="_blank">ioquake3</a> and bolts it onto a rally chassis.
+        Pickup-style powerups, weapons, jump pads, secret routes — everything you
+        remember from arena shooters, behind the wheel.
+      </p>
+      <div class="stats-grid">
+        <div class="stat-item"><div class="stat-num-big">20+</div><div class="stat-lbl">Years in Development</div></div>
+        <div class="stat-item"><div class="stat-num-big">{counts.cars}</div><div class="stat-lbl">Vehicles</div></div>
+        <div class="stat-item"><div class="stat-num-big">{counts.maps}</div><div class="stat-lbl">Community Maps</div></div>
+        <div class="stat-item"><div class="stat-num-big">{counts.powerups}</div><div class="stat-lbl">Powerups / Holdables</div></div>
+        <div class="stat-item"><div class="stat-num-big">{counts.weapons}</div><div class="stat-lbl">Rearfire Weapons</div></div>
+        <div class="stat-item"><div class="stat-num-big">{counts.roadside}</div><div class="stat-lbl">Roadside Objects</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DOWNLOADS 04/04 -->
+  {currentBuilds.length > 0 && (
+    <section class="section-downloads" id="downloads">
+      <div class="dl-section-header">
+        <div>
+          <div class="section-label"><span>04</span> / 04 &nbsp; DOWNLOADS</div>
+          <h2 class="section-headline">GET THE<br>GAME.</h2>
+        </div>
+        <a href={`${b}/downloads`} class="news-all-link">ALL DOWNLOADS →</a>
+      </div>
+      {currentBuilds.map(cb => (
+        <div class="dl-build">
+          <div class="dl-build-meta">
+            <span class="dl-version">v{cb.version}</span>
+            {cb.category && <span class="dl-category">{cb.category}</span>}
+            {cb.publishedAt && <span class="dl-date">{formatDate(cb.publishedAt)}</span>}
+          </div>
+          <div class="dl-platforms">
+            {cb.platforms?.map(p => (
+              <a href={p.url ?? '#'} class={`dl-card${p.recommended ? ' recommended' : ''}`}>
+                {p.recommended && <div class="dl-rec">RECOMMENDED</div>}
+                <div class="dl-platform-name">{p.name}</div>
+                {p.subtitle && <div class="dl-subtitle">{p.subtitle}</div>}
+                <div class="dl-size">{p.size ?? ''}</div>
+                <div class="dl-btn">
+                  <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  DOWNLOAD
+                </div>
+              </a>
+            ))}
+          </div>
+          {cb.changelog && (
+            <div class="dl-changelog">
+              <div class="dl-changelog-label">CHANGELOG</div>
+              <pre class="dl-changelog-body">{cb.changelog}</pre>
+            </div>
+          )}
+        </div>
+      ))}
+    </section>
+  )}
+
+  <!-- FOOTER -->
+  <footer slot="footer">
+    <div class="footer-brand">
+      <div class="footer-logo">
+        <img src={`${b}/logo.png`} alt="Q3Rally" class="footer-logo-img" />
+        <span class="footer-logo-text">Q3RALLY</span>
+      </div>
+      <p class="footer-tagline">FREE · OPEN SOURCE · BUILT BY THE COMMUNITY SINCE 2005. GPL-2.0.</p>
+    </div>
+    <div>
+      <div class="footer-col-title">Game</div>
+      <ul class="footer-links">
+        <li><a href={`${b}/downloads`}>Downloads</a></li>
+        <li><a href={`${b}/cars`}>Cars</a></li>
+        <li><a href={`${b}/maps`}>Maps</a></li>
+        <li><a href={`${b}/powerups`}>Powerups / Holdables</a></li>
+        <li><a href={`${b}/weapons`}>Rearfire Weapons</a></li>
+        <li><a href={`${b}/roadside`}>Roadside Objects</a></li>
+      </ul>
+    </div>
+    <div>
+      <div class="footer-col-title">Community</div>
+      <ul class="footer-links">
+        <li><a href="https://discord.gg/ascZgRCaJ" target="_blank">Discord</a></li>
+        <li><a href="https://github.com/Q3Rally-Team/q3rally/issues" target="_blank">Bug Tracker</a></li>
+      </ul>
+    </div>
+    <div>
+      <div class="footer-col-title">Dev</div>
+      <ul class="footer-links">
+        <li><a href="https://github.com/Q3Rally-Team/q3rally" target="_blank">GitHub</a></li>
+      </ul>
+    </div>
+  </footer>
+</BaseLayout>
+
+<!-- Stats fetch from Umami API (runs client-side) -->
+<script>
+  async function loadStats() {
+    try {
+      const res = await fetch('/api/stats.php');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.online)     document.getElementById('stat-online').textContent     = data.online.toLocaleString('de-DE');
+      if (data.visitors)   document.getElementById('stat-visitors').textContent   = data.visitors.toLocaleString('de-DE');
+      if (data.pageviews)  document.getElementById('stat-pageviews').textContent  = data.pageviews.toLocaleString('de-DE');
+      if (data.downloads)  document.getElementById('stat-downloads').textContent  = data.downloads.toLocaleString('de-DE');
+      if (data.today)      document.getElementById('stat-today').textContent      = data.today.toLocaleString('de-DE');
+    } catch (e) { /* stats unavailable, show dashes */ }
+  }
+  loadStats();
+  setInterval(loadStats, 30000);
+</script>
+
+<style>
+  /* TOP BAR */
+  .top-bar { background: var(--black); border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; height: 36px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+  .top-bar-left { display: flex; align-items: center; gap: 10px; overflow: hidden; }
+  .top-bar-left span { color: var(--gray-light); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top-bar-left span b { color: var(--white); }
+  .live-dot { width: 7px; height: 7px; background: var(--orange); border-radius: 50%; animation: pulse 2s infinite; flex-shrink: 0; }
+  .top-bar-right { display: flex; align-items: center; gap: 16px; color: var(--gray); font-size: 10px; flex-shrink: 0; }
+  .top-bar-right .hl { color: var(--orange); }
+
+  /* HERO */
+  .hero { background-color: var(--black); background-image: var(--stripe); position: relative; padding: 70px 80px 60px; min-height: 540px; display: flex; align-items: flex-end; gap: 40px; overflow: hidden; }
+  .hero-left { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; }
+  .hero-cards { display: flex; flex-direction: row; gap: 12px; align-items: stretch; flex-shrink: 0; }
+  .shot-img-wrap { flex: 1; overflow: hidden; margin: 0 -18px; aspect-ratio: 16/9; }
+  .shot-img-wrap img { width: 100%; height: 100%; object-fit: cover; }
+  .shot-caption-text { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--gray); letter-spacing: 0.1em; text-transform: uppercase; margin-top: 10px; line-height: 1.4; }
+  .section-label { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 18px; }
+  .section-label span { color: var(--orange); }
+  .hero-headline { font-family: 'Barlow Condensed', sans-serif; font-size: clamp(72px, 10vw, 130px); font-weight: 900; line-height: 0.9; text-transform: uppercase; letter-spacing: -0.01em; margin-bottom: 20px; }
+  .hero-headline .orange { color: var(--orange); font-style: italic; }
+  .hero-sub { font-size: 15px; color: var(--gray-light); max-width: 420px; line-height: 1.6; margin-bottom: 32px; }
+  .hero-buttons { display: flex; gap: 14px; flex-wrap: wrap; }
+  .btn-primary { background: var(--orange); color: var(--white); font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 14px; letter-spacing: 0.1em; text-transform: uppercase; padding: 14px 28px; display: flex; align-items: center; gap: 10px; transition: background 0.15s; }
+  .btn-primary:hover { background: var(--orange-dim); }
+  .btn-primary small { font-size: 10px; font-weight: 400; opacity: 0.7; letter-spacing: 0.08em; display: block; }
+  .btn-secondary { background: transparent; color: var(--white); font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 14px; letter-spacing: 0.1em; text-transform: uppercase; padding: 14px 28px; border: 1px solid #444; display: flex; align-items: center; gap: 10px; transition: border-color 0.15s; }
+  .btn-secondary:hover { border-color: var(--white); }
+
+  /* HERO CARDS */
+  .hero-card { width: 200px; border: 1px solid #333; padding: 16px 18px; background: rgba(10,10,10,0.7); backdrop-filter: blur(4px); position: relative; display: flex; flex-direction: column; }
+  .hero-card::before, .hero-card::after, .card-corner-br::before, .card-corner-br::after { content: ''; position: absolute; width: 10px; height: 10px; }
+  .hero-card::before { top: -1px; left: -1px; border-top: 2px solid var(--orange); border-left: 2px solid var(--orange); }
+  .hero-card::after { top: -1px; right: -1px; border-top: 2px solid var(--orange); border-right: 2px solid var(--orange); }
+  .card-corner-br::before { bottom: -1px; left: -1px; border-bottom: 2px solid var(--orange); border-left: 2px solid var(--orange); }
+  .card-corner-br::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--orange); border-right: 2px solid var(--orange); }
+  .card-label { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: 0.2em; color: var(--orange); text-transform: uppercase; margin-bottom: 10px; }
+
+  /* CAR CARD */
+  .car-img-wrap { flex: 1; display: flex; align-items: center; justify-content: center; background: #0d0d0d; margin: 0 -18px; overflow: hidden; min-height: 120px; }
+  .car-img-wrap img { width: 100%; height: 100%; object-fit: contain; padding: 8px; }
+  .car-img-placeholder { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: #333; }
+  .car-name { font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.03em; margin-top: 12px; margin-bottom: 4px; }
+  .card-link { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: 0.15em; color: var(--orange); text-transform: uppercase; margin-top: auto; padding-top: 10px; }
+  .card-link:hover { color: var(--white); }
+
+  /* BUILD CARD */
+  .build-version { font-family: 'Barlow Condensed', sans-serif; font-size: 48px; font-weight: 900; line-height: 1; margin-bottom: 14px; }
+  .build-version span { color: var(--orange); }
+  .build-rows { display: flex; flex-direction: column; gap: 5px; margin-top: auto; }
+  .build-row { display: flex; justify-content: space-between; font-family: 'Share Tech Mono', monospace; font-size: 10px; gap: 8px; }
+  .build-row .key { color: var(--gray); text-transform: uppercase; }
+  .build-row .val { color: var(--white); text-align: right; }
+
+  /* STATS STRIP */
+  .stats-strip { background: var(--dark2); border-bottom: 1px solid #1e1e1e; display: flex; align-items: stretch; }
+  .stat-block { flex: 1; display: flex; align-items: center; gap: 14px; padding: 0 32px; height: 58px; border-right: 1px solid #1e1e1e; }
+  .stat-block:last-child { border-right: none; }
+  .stat-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--orange); flex-shrink: 0; }
+  .stat-dot.pulse { animation: pulse 2s infinite; }
+  .stat-dot.static { background: #444; }
+  .stat-block-live .stat-num { color: var(--orange); }
+  .stat-num { font-family: 'Share Tech Mono', monospace; font-size: 18px; line-height: 1; color: var(--white); }
+  .stat-label { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--gray); margin-top: 3px; }
+
+  /* TICKER */
+  .ticker-wrap { background: var(--dark2); border-bottom: 1px solid #222; overflow: hidden; height: 40px; display: flex; align-items: center; }
+  .ticker-track { display: flex; animation: ticker 35s linear infinite; white-space: nowrap; }
+  .ticker-track:hover { animation-play-state: paused; }
+  @keyframes ticker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  .ticker-item { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gray); padding: 0 28px; display: flex; align-items: center; gap: 14px; }
+  .ticker-item b { color: var(--white); }
+  .ticker-sep { color: var(--orange); }
+
+  /* ABOUT */
+  .section-about { padding: 90px 80px; background: var(--black); background-image: var(--stripe); display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: start; }
+  .section-headline { font-family: 'Barlow Condensed', sans-serif; font-size: clamp(52px, 7vw, 90px); font-weight: 900; line-height: 0.88; text-transform: uppercase; }
+  .about-right { padding-top: 8px; }
+  .about-desc { font-size: 16px; color: var(--gray-light); line-height: 1.7; margin-bottom: 40px; }
+  .about-desc a { color: var(--orange); }
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px 40px; }
+  .stat-item { }
+  .stat-num-big { font-family: 'Barlow Condensed', sans-serif; font-size: 48px; font-weight: 900; line-height: 1; }
+  .stat-lbl { font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--gray); margin-top: 4px; }
+
+  /* NEWS */
+  .section-news { padding: 80px 80px 72px; background: var(--dark); background-image: var(--stripe); border-top: 1px solid #1a1a1a; border-bottom: 1px solid #1a1a1a; }
+  .news-header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 40px; }
+  .news-all-link { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--orange); letter-spacing: 0.15em; text-transform: uppercase; padding-bottom: 4px; transition: color 0.15s; }
+  .news-all-link:hover { color: var(--white); }
+  .news-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .news-card { border: 1px solid #333; padding: 24px 26px; background: rgba(10,10,10,0.6); position: relative; display: flex; flex-direction: column; gap: 10px; }
+  .news-card::before, .news-card::after, .news-card-corner-br::before, .news-card-corner-br::after { content: ''; position: absolute; width: 10px; height: 10px; }
+  .news-card::before { top: -1px; left: -1px; border-top: 2px solid var(--orange); border-left: 2px solid var(--orange); }
+  .news-card::after { top: -1px; right: -1px; border-top: 2px solid var(--orange); border-right: 2px solid var(--orange); }
+  .news-card-corner-br::before { bottom: -1px; left: -1px; border-bottom: 2px solid var(--orange); border-left: 2px solid var(--orange); }
+  .news-card-corner-br::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--orange); border-right: 2px solid var(--orange); }
+  .news-date { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--orange); letter-spacing: 0.15em; text-transform: uppercase; }
+  .news-title { font-family: 'Barlow Condensed', sans-serif; font-size: 28px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.02em; line-height: 1.05; }
+  .news-excerpt { font-size: 13px; color: var(--gray-light); line-height: 1.65; flex: 1; }
+
+  /* DOWNLOADS 04/04 */
+  .section-downloads { padding: 80px 80px 72px; background: var(--dark2); background-image: var(--stripe); border-top: 1px solid #1a1a1a; }
+  .dl-section-header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 40px; }
+  .dl-build { margin-bottom: 48px; }
+  .dl-build:last-child { margin-bottom: 0; }
+  .dl-build-meta { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+  .dl-version { font-family: 'Barlow Condensed', sans-serif; font-size: 32px; font-weight: 900; line-height: 1; }
+  .dl-category { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--orange); letter-spacing: 0.15em; text-transform: uppercase; border: 1px solid var(--orange); padding: 2px 8px; }
+  .dl-date { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray); letter-spacing: 0.1em; }
+  .dl-platforms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; margin-bottom: 20px; }
+  .dl-card { background: var(--dark); border: 1px solid #2a2a2a; padding: 28px 24px; display: flex; flex-direction: column; gap: 6px; text-decoration: none; color: inherit; transition: border-color 0.15s, background 0.15s; position: relative; }
+  .dl-card:hover { border-color: var(--orange); background: #111; }
+  .dl-card.recommended { border-color: #333; }
+  .dl-rec { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--orange); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 4px; }
+  .dl-platform-name { font-family: 'Barlow Condensed', sans-serif; font-size: 26px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.02em; }
+  .dl-subtitle { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray); letter-spacing: 0.08em; }
+  .dl-size { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray-light); margin-top: 4px; }
+  .dl-btn { margin-top: auto; padding-top: 18px; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 800; letter-spacing: 0.12em; color: var(--orange); display: flex; align-items: center; gap: 8px; }
+  .dl-changelog { border: 1px solid #1e1e1e; padding: 20px 24px; background: rgba(0,0,0,0.3); }
+  .dl-changelog-label { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 10px; }
+  .dl-changelog-body { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray); line-height: 1.8; white-space: pre-wrap; word-break: break-word; }
+
+  /* FOOTER */
+  footer { background: var(--dark2); border-top: 1px solid #1e1e1e; padding: 50px 80px; display: grid; grid-template-columns: 220px repeat(3, 1fr); gap: 40px; }
+  .footer-logo { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .footer-logo-img { width: 24px; height: 24px; object-fit: contain; }
+  .footer-logo-text { font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 18px; letter-spacing: 0.05em; }
+  .footer-tagline { font-size: 12px; color: var(--gray); line-height: 1.6; }
+  .footer-col-title { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: var(--gray); margin-bottom: 16px; }
+  .footer-links { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .footer-links a { font-family: 'Barlow Condensed', sans-serif; font-size: 15px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--gray-light); transition: color 0.15s; }
+  .footer-links a:hover { color: var(--orange); }
+
+  @media (max-width: 768px) {
+    /* TOP BAR */
+    .top-bar { padding: 0 16px; height: 32px; }
+    .top-bar-right { display: none; }
+    .top-bar-left span { font-size: 10px; }
+
+    /* HERO */
+    .hero { flex-direction: column; align-items: flex-start; padding: 40px 20px 36px; gap: 32px; min-height: unset; }
+    .hero-cards { flex-direction: row; overflow-x: auto; width: calc(100% + 40px); margin: 0 -20px; padding: 0 20px 8px; gap: 10px; -webkit-overflow-scrolling: touch; }
+    .hero-card { width: 160px; min-width: 160px; flex-shrink: 0; }
+    .hero-headline { font-size: clamp(52px, 14vw, 80px); }
+    .hero-sub { font-size: 14px; margin-bottom: 24px; }
+    .hero-buttons { flex-direction: column; gap: 10px; }
+    .btn-primary, .btn-secondary { width: 100%; justify-content: center; }
+
+    /* STATS STRIP */
+    .stats-strip { display: grid; grid-template-columns: 1fr 1fr; }
+    .stat-block { height: 56px; padding: 0 16px; border-right: 1px solid #1e1e1e; border-bottom: 1px solid #1e1e1e; }
+    .stat-block:last-child { border-right: none; }
+    .stat-block:nth-child(2n) { border-right: none; }
+    .stat-num { font-size: 15px; }
+    .stat-label { font-size: 8px; }
+
+    /* NEWS SECTION */
+    .section-news { padding: 48px 20px 40px; }
+    .news-header { flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
+    .news-cards { grid-template-columns: 1fr; }
+
+    /* ABOUT */
+    .section-about { padding: 48px 20px; grid-template-columns: 1fr; gap: 32px; }
+    .stats-grid { grid-template-columns: 1fr 1fr; gap: 20px 24px; }
+    .stat-num-big { font-size: 36px; }
+
+    /* DOWNLOADS */
+    .section-downloads { padding: 48px 20px 40px; }
+    .dl-section-header { flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
+    .dl-platforms { grid-template-columns: 1fr; }
+
+    /* FOOTER */
+    footer { padding: 40px 20px; grid-template-columns: 1fr; gap: 32px; }
+  }
+</style>

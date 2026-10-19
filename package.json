@@ -1,0 +1,17 @@
+{
+  "name": "q3rally-site",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "sanity": "sanity dev"
+  },
+  "dependencies": {
+    "astro": "^4.15.0",
+    "@sanity/client": "^6.22.0",
+    "@sanity/image-url": "^1.1.0",
+    "sanity": "^3.57.0"
+  }
+}

@@ -1,0 +1,177 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Nav from '../components/Nav.astro';
+import { getMaps, getLatestBuild, urlFor } from '../lib/sanity.js';
+
+const b = import.meta.env.BASE_URL.replace(/\/$/, '');
+const build = await getLatestBuild();
+const maps = await getMaps();
+---
+<BaseLayout title="Q3Rally — Maps">
+  <div slot="topbar" class="top-bar">
+    <div class="top-bar-left">
+      <div class="live-dot"></div>
+      <span><b>BUILD {build?.version ?? '—'}</b> &nbsp;·&nbsp; LIVE &nbsp;·&nbsp; <b>{maps.length} MAPS</b></span>
+    </div>
+    <div class="top-bar-right">
+      <span class="hl">FREE</span><span>·</span><span>OPEN SOURCE</span><span>·</span><span>GPL v2</span>
+    </div>
+  </div>
+
+  <Nav slot="nav" active={`${b}/maps`} build={build} />
+
+  <div class="page-header">
+    <div>
+      <div class="section-label"><span>MAPS</span> &nbsp;/&nbsp; COMMUNITY TRACK LIST</div>
+      <h1 class="page-title">KNOW YOUR<br /><span class="orange">TRACK.</span></h1>
+    </div>
+    <div class="page-header-right">
+      <div class="count-big">{maps.length}<span>.</span></div>
+      <div class="count-label">Community Maps</div>
+    </div>
+  </div>
+
+  <section class="maps-section">
+    <div class="maps-grid">
+      {maps.map((map, i) => {
+        const allShots = [map.mainImage, ...(map.screenshots ?? [])].filter(Boolean);
+        const thumbShots = allShots.slice(1, 5);
+        const extraCount = allShots.length - 5;
+        return (
+          <div class="map-card">
+            <div class="map-main-img">
+              {allShots[0]
+                ? <img
+                    src={urlFor(allShots[0]).width(1200).fit('max').auto('format').url()}
+                    data-full={urlFor(allShots[0]).width(1200).fit('max').auto('format').url()}
+                    data-thumb={urlFor(allShots[0]).width(400).fit('max').auto('format').url()}
+                    alt={map.name}
+                    loading={i < 3 ? 'eager' : 'lazy'}
+                  />
+                : <span class="placeholder">[ SCREENSHOT ]</span>
+              }
+              <div class="map-img-overlay"></div>
+              <div class="shot-count">
+                <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" fill="none" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                {allShots.length} {allShots.length === 1 ? 'Screenshot' : 'Screenshots'}
+              </div>
+            </div>
+
+            {allShots.length > 1 && (
+              <div class="map-thumbs">
+                {thumbShots.map((shot) => (
+                  <div
+                    class="map-thumb"
+                    data-full={urlFor(shot).width(1200).fit('max').auto('format').url()}
+                    data-thumb={urlFor(shot).width(400).fit('max').auto('format').url()}
+                  >
+                    {shot && <img src={urlFor(shot).width(400).fit('max').auto('format').url()} alt="" loading="lazy" />}
+                  </div>
+                ))}
+                {extraCount > 0
+                  ? <div class="map-thumb-more">+{extraCount}</div>
+                  : thumbShots.length < 4 && <div class="map-thumb empty"></div>
+                }
+                {thumbShots.length < 3 && <div class="map-thumb empty"></div>}
+              </div>
+            )}
+
+            <div class="map-info">
+              <div class="map-name">{map.name}</div>
+              {map.description && <div class="map-desc">{map.description}</div>}
+            </div>
+            <span class="map-num">{String(i + 1).padStart(2, '0')}</span>
+          </div>
+        );
+      })}
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .top-bar { background: var(--black); border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; height: 36px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+  .top-bar-left { display: flex; align-items: center; gap: 10px; }
+  .live-dot { width: 7px; height: 7px; background: var(--orange); border-radius: 50%; animation: pulse 2s infinite; }
+  .top-bar-left span { color: var(--gray-light); }
+  .top-bar-left span b { color: var(--white); }
+  .top-bar-right { display: flex; align-items: center; gap: 16px; color: var(--gray); font-size: 10px; }
+  .hl { color: var(--orange); }
+
+  .page-header { background-color: var(--dark); background-image: var(--stripe); padding: 56px 80px 52px; display: flex; align-items: flex-end; justify-content: space-between; border-bottom: 1px solid #222; }
+  .section-label { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 14px; }
+  .section-label span { color: var(--orange); }
+  .page-title { font-family: 'Barlow Condensed', sans-serif; font-size: clamp(64px, 8vw, 110px); font-weight: 900; line-height: 0.88; text-transform: uppercase; }
+  .page-title .orange { color: var(--orange); font-style: italic; }
+  .page-header-right { text-align: right; }
+  .count-big { font-family: 'Barlow Condensed', sans-serif; font-size: 56px; font-weight: 900; line-height: 1; }
+  .count-big span { color: var(--orange); }
+  .count-label { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; margin-top: 4px; }
+
+  .maps-section { padding: 48px 80px 80px; background: var(--black); }
+  .maps-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+  .map-card { background: var(--dark2); cursor: pointer; transition: background 0.15s; position: relative; overflow: hidden; }
+  .map-card:hover { background: #1e1e1e; }
+  .map-card:hover .map-img-overlay { opacity: 1; }
+  .map-main-img { aspect-ratio: 16/9; background-color: #161616; background-image: var(--stripe); position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .map-main-img img { width: 100%; height: 100%; object-fit: cover; transition: opacity 0.18s ease; }
+  .placeholder { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: #2e2e2e; }
+  .map-img-overlay { position: absolute; inset: 0; background: rgba(255,85,0,0.07); opacity: 0; transition: opacity 0.2s; border: 1px solid rgba(255,85,0,0.25); }
+  .shot-count { position: absolute; bottom: 10px; right: 10px; background: rgba(0,0,0,0.75); border: 1px solid #333; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gray-light); padding: 3px 8px; display: flex; align-items: center; gap: 5px; }
+  .map-thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; background: #0d0d0d; padding: 2px; }
+  .map-thumb { aspect-ratio: 16/9; background-color: #121212; background-image: var(--stripe); position: relative; overflow: hidden; }
+  .map-thumb img { width: 100%; height: 100%; object-fit: cover; transition: opacity 0.15s; }
+  .map-thumb[data-full] { cursor: pointer; }
+  .map-thumb[data-full]:hover img { opacity: 0.7; }
+  .map-thumb[data-full]:hover { outline: 1px solid var(--orange); outline-offset: -1px; }
+  .map-thumb.empty { opacity: 0.2; }
+  .map-thumb-more { aspect-ratio: 16/9; background: #111; display: flex; align-items: center; justify-content: center; font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: 0.1em; color: var(--gray); }
+  .map-num { position: absolute; top: 12px; right: 12px; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: 0.1em; color: #2e2e2e; }
+  .map-info { padding: 18px 20px 22px; border-top: 1px solid #252525; }
+  .map-name { font-family: 'Barlow Condensed', sans-serif; font-size: 24px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.03em; line-height: 1; margin-bottom: 8px; }
+  .map-desc { font-size: 12px; color: var(--gray); line-height: 1.55; }
+
+  @media (max-width: 768px) {
+    .top-bar { padding: 0 16px; height: 32px; }
+    .top-bar-right { display: none; }
+    .page-header { padding: 36px 20px 32px; flex-direction: column; align-items: flex-start; gap: 16px; }
+    .maps-section { padding: 28px 16px 48px; }
+    .maps-grid { grid-template-columns: 1fr; }
+    .count-big { font-size: 40px; }
+  }
+</style>
+
+<script>
+  document.querySelectorAll('.map-card').forEach(card => {
+    const mainImg = card.querySelector('.map-main-img img');
+    if (!mainImg) return;
+
+    card.querySelectorAll('.map-thumb[data-full]').forEach(thumb => {
+      thumb.addEventListener('click', () => {
+        const thumbImg = thumb.querySelector('img');
+        if (!thumbImg) return;
+
+        // Aktuelle Hauptbild-Werte sichern
+        const oldFull  = mainImg.dataset.full;
+        const oldThumb = mainImg.dataset.thumb;
+
+        // Neue Hauptbild-Werte aus dem geklickten Thumbnail
+        const newFull  = thumb.dataset.full;
+        const newThumb = thumb.dataset.thumb;
+
+        // Kurzes Fade-Out → Bild wechseln → Fade-In
+        mainImg.style.opacity = '0';
+        setTimeout(() => {
+          mainImg.src             = newFull;
+          mainImg.dataset.full    = newFull;
+          mainImg.dataset.thumb   = newThumb;
+          mainImg.style.opacity   = '1';
+        }, 180);
+
+        // Thumbnail bekommt das alte Hauptbild
+        thumbImg.src           = oldThumb;
+        thumb.dataset.full     = oldFull;
+        thumb.dataset.thumb    = oldThumb;
+      });
+    });
+  });
+</script>

@@ -1,0 +1,252 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Nav from '../components/Nav.astro';
+import { getVideos, getScreenshots, getLatestBuild, urlFor } from '../lib/sanity.js';
+
+const b = import.meta.env.BASE_URL.replace(/\/$/, '');
+const build = await getLatestBuild();
+const videos = await getVideos();
+const screenshots = await getScreenshots();
+
+const hasContent = videos.length > 0 || screenshots.length > 0;
+const totalItems = videos.length + screenshots.length;
+---
+<BaseLayout title="Q3Rally — Media">
+  <div slot="topbar" class="top-bar">
+    <div class="top-bar-left">
+      <div class="live-dot"></div>
+      <span>
+        <b>BUILD {build?.version ?? '—'}</b>
+        &nbsp;·&nbsp; LIVE
+        &nbsp;·&nbsp; <b>{videos.length} VIDEOS</b>
+        &nbsp;·&nbsp; <b>{screenshots.length} SCREENSHOTS</b>
+      </span>
+    </div>
+    <div class="top-bar-right">
+      <span class="hl">FREE</span><span>·</span><span>OPEN SOURCE</span><span>·</span><span>GPL v2</span>
+    </div>
+  </div>
+
+  <Nav slot="nav" active={`${b}/media`} build={build} />
+
+  <div class="page-header">
+    <div>
+      <div class="section-label"><span>MEDIA</span> &nbsp;/&nbsp; SCREENSHOTS &amp; VIDEOS</div>
+      <h1 class="page-title">SEE IT /<br /><span class="orange">LIVE.</span></h1>
+    </div>
+    <div class="page-header-right">
+      <div class="count-big">{totalItems}<span>.</span></div>
+      <div class="count-label">Media Items</div>
+    </div>
+  </div>
+
+  {!hasContent && (
+    <section class="empty-section">
+      <div class="empty-state">
+        <div class="empty-icon">[ // ]</div>
+        <div class="empty-label">Media coming soon.</div>
+        <p class="empty-sub">Screenshots and gameplay videos will appear here.</p>
+      </div>
+    </section>
+  )}
+
+  {videos.length > 0 && (
+    <section class="media-section">
+      <div class="section-header">
+        <div class="section-tag">Videos</div>
+        <div class="section-count">{videos.length}</div>
+      </div>
+      <div class="video-grid">
+        {videos.map(v => (
+          <div class="video-card">
+            <div class="video-embed">
+              <iframe
+                src={`https://www.youtube-nocookie.com/embed/${v.youtubeId}`}
+                title={v.title}
+                frameborder="0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowfullscreen
+                loading="lazy"
+              ></iframe>
+            </div>
+            <div class="video-info">
+              <div class="video-title">{v.title}</div>
+              {v.description && <div class="video-desc">{v.description}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )}
+
+  {screenshots.length > 0 && (
+    <section class="media-section">
+      <div class="section-header">
+        <div class="section-tag">Screenshots</div>
+        <div class="section-count">{screenshots.length}</div>
+      </div>
+      <div class="shot-grid">
+        {screenshots.map((s, i) => (
+          <button
+            class="shot-card"
+            data-lightbox
+            data-src={urlFor(s.image).width(1920).fit('max').auto('format').url()}
+            data-caption={s.caption ?? ''}
+            data-index={i}
+            aria-label={s.caption ?? `Screenshot ${i + 1}`}
+          >
+            <div class="shot-img">
+              <img
+                src={urlFor(s.image).width(800).fit('max').auto('format').url()}
+                alt={s.caption ?? `Screenshot ${i + 1}`}
+                loading={i < 6 ? 'eager' : 'lazy'}
+              />
+              <div class="shot-overlay">
+                <svg viewBox="0 0 24 24" width="20" height="20" stroke="white" fill="none" stroke-width="1.5"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+              </div>
+            </div>
+            {s.caption && <div class="shot-caption">{s.caption}</div>}
+          </button>
+        ))}
+      </div>
+    </section>
+  )}
+</BaseLayout>
+
+<!-- LIGHTBOX -->
+<div id="lightbox" class="lightbox" aria-hidden="true" role="dialog">
+  <div class="lb-backdrop"></div>
+  <button class="lb-close" aria-label="Close">
+    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  </button>
+  <button class="lb-prev" aria-label="Previous">
+    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+  </button>
+  <button class="lb-next" aria-label="Next">
+    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+  </button>
+  <div class="lb-content">
+    <img id="lb-img" src="" alt="" />
+    <div id="lb-caption" class="lb-caption"></div>
+    <div id="lb-counter" class="lb-counter"></div>
+  </div>
+</div>
+
+<script>
+  const cards = Array.from(document.querySelectorAll('[data-lightbox]'));
+  const lb = document.getElementById('lightbox');
+  const lbImg = document.getElementById('lb-img');
+  const lbCaption = document.getElementById('lb-caption');
+  const lbCounter = document.getElementById('lb-counter');
+  let current = 0;
+
+  function open(index) {
+    current = index;
+    const card = cards[current];
+    lbImg.src = card.dataset.src;
+    lbImg.alt = card.dataset.caption;
+    lbCaption.textContent = card.dataset.caption;
+    lbCounter.textContent = `${current + 1} / ${cards.length}`;
+    lb.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function close() {
+    lb.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    lbImg.src = '';
+  }
+
+  function prev() { open((current - 1 + cards.length) % cards.length); }
+  function next() { open((current + 1) % cards.length); }
+
+  cards.forEach((card, i) => card.addEventListener('click', () => open(i)));
+  document.querySelector('.lb-close').addEventListener('click', close);
+  document.querySelector('.lb-backdrop').addEventListener('click', close);
+  document.querySelector('.lb-prev').addEventListener('click', prev);
+  document.querySelector('.lb-next').addEventListener('click', next);
+
+  document.addEventListener('keydown', e => {
+    if (lb.getAttribute('aria-hidden') === 'true') return;
+    if (e.key === 'Escape') close();
+    if (e.key === 'ArrowLeft') prev();
+    if (e.key === 'ArrowRight') next();
+  });
+</script>
+
+<style>
+  .top-bar { background: var(--black); border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; height: 36px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+  .top-bar-left { display: flex; align-items: center; gap: 10px; }
+  .live-dot { width: 7px; height: 7px; background: var(--orange); border-radius: 50%; animation: pulse 2s infinite; }
+  .top-bar-left span { color: var(--gray-light); }
+  .top-bar-left span b { color: var(--white); }
+  .top-bar-right { display: flex; align-items: center; gap: 16px; color: var(--gray); font-size: 10px; }
+  .hl { color: var(--orange); }
+
+  .page-header { background-color: var(--dark); background-image: var(--stripe); padding: 56px 80px 52px; display: flex; align-items: flex-end; justify-content: space-between; border-bottom: 1px solid #222; }
+  .section-label { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 14px; }
+  .section-label span { color: var(--orange); }
+  .page-title { font-family: 'Barlow Condensed', sans-serif; font-size: clamp(64px, 8vw, 110px); font-weight: 900; line-height: 0.88; text-transform: uppercase; }
+  .page-title .orange { color: var(--orange); font-style: italic; }
+  .page-header-right { text-align: right; }
+  .count-big { font-family: 'Barlow Condensed', sans-serif; font-size: 56px; font-weight: 900; line-height: 1; }
+  .count-big span { color: var(--orange); }
+  .count-label { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; margin-top: 4px; }
+
+  .empty-section { padding: 80px; background: var(--black); display: flex; justify-content: center; }
+  .empty-state { text-align: center; }
+  .empty-icon { font-family: 'Share Tech Mono', monospace; font-size: 28px; color: #2e2e2e; margin-bottom: 20px; }
+  .empty-label { font-family: 'Barlow Condensed', sans-serif; font-size: 28px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gray-light); margin-bottom: 10px; }
+  .empty-sub { font-size: 13px; color: var(--gray); }
+
+  .media-section { padding: 48px 80px 64px; background: var(--black); border-top: 1px solid #1a1a1a; }
+  .section-header { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; }
+  .section-tag { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--orange); letter-spacing: 0.15em; text-transform: uppercase; }
+  .section-count { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: #333; letter-spacing: 0.1em; }
+
+  /* VIDEOS */
+  .video-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; }
+  .video-card { background: var(--dark2); overflow: hidden; }
+  .video-embed { position: relative; padding-bottom: 56.25%; }
+  .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .video-info { padding: 18px 20px 22px; border-top: 1px solid #252525; }
+  .video-title { font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.03em; line-height: 1; margin-bottom: 6px; }
+  .video-desc { font-size: 12px; color: var(--gray); line-height: 1.55; }
+
+  /* SCREENSHOTS */
+  .shot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+  .shot-card { background: var(--dark2); border: none; padding: 0; cursor: pointer; text-align: left; display: block; }
+  .shot-card:focus-visible { outline: 2px solid var(--orange); outline-offset: -2px; }
+  .shot-img { position: relative; aspect-ratio: 16/9; overflow: hidden; }
+  .shot-img img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
+  .shot-card:hover .shot-img img { transform: scale(1.04); }
+  .shot-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.45); opacity: 0; transition: opacity 0.2s; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,85,0,0.3); }
+  .shot-card:hover .shot-overlay { opacity: 1; }
+  .shot-caption { padding: 10px 14px 12px; font-size: 11px; color: var(--gray); font-family: 'Share Tech Mono', monospace; letter-spacing: 0.05em; border-top: 1px solid #252525; }
+
+  /* LIGHTBOX */
+  .lightbox { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; transition: opacity 0.2s; }
+  .lightbox[aria-hidden="true"] { opacity: 0; pointer-events: none; }
+  .lightbox[aria-hidden="false"] { opacity: 1; pointer-events: all; }
+  .lb-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.92); }
+  .lb-content { position: relative; z-index: 1; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .lb-content img { max-width: 90vw; max-height: 80vh; object-fit: contain; display: block; }
+  .lb-caption { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray); letter-spacing: 0.1em; text-transform: uppercase; }
+  .lb-counter { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: #444; letter-spacing: 0.1em; }
+  .lb-close { position: fixed; top: 24px; right: 28px; z-index: 2; background: rgba(20,20,20,0.8); border: 1px solid #333; color: var(--gray-light); width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: border-color 0.15s; }
+  .lb-close:hover { border-color: var(--orange); color: var(--orange); }
+  .lb-prev, .lb-next { position: fixed; top: 50%; transform: translateY(-50%); z-index: 2; background: rgba(20,20,20,0.8); border: 1px solid #333; color: var(--gray-light); width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: border-color 0.15s; }
+  .lb-prev { left: 20px; }
+  .lb-next { right: 20px; }
+  .lb-prev:hover, .lb-next:hover { border-color: var(--orange); color: var(--orange); }
+
+  @media (max-width: 768px) {
+    .top-bar { padding: 0 16px; height: 32px; }
+    .top-bar-right { display: none; }
+    .page-header { padding: 36px 20px 32px; flex-direction: column; align-items: flex-start; gap: 16px; }
+    .media-section { padding: 28px 16px 40px; }
+    .video-grid { grid-template-columns: 1fr; }
+    .shot-grid { grid-template-columns: repeat(2, 1fr); }
+    .count-big { font-size: 40px; }
+  }
+</style>

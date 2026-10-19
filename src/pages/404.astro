@@ -1,0 +1,126 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Nav from '../components/Nav.astro';
+import { getLatestBuild } from '../lib/sanity.js';
+
+const b = import.meta.env.BASE_URL.replace(/\/$/, '');
+const build = await getLatestBuild();
+---
+<BaseLayout title="Q3Rally — 404 · Off Track" description="This page doesn't exist. Maybe it got run over.">
+  <div slot="topbar" class="top-bar">
+    <div class="top-bar-left">
+      <div class="live-dot"></div>
+      <span><b>BUILD {build?.version ?? '—'}</b> &nbsp;·&nbsp; LIVE &nbsp;·&nbsp; <b>PAGE NOT FOUND</b></span>
+    </div>
+    <div class="top-bar-right">
+      <span class="hl">FREE</span><span>·</span><span>OPEN SOURCE</span><span>·</span><span>GPL v2</span>
+    </div>
+  </div>
+
+  <Nav slot="nav" build={build} />
+
+  <div class="error-page">
+    <div class="error-inner">
+      <div class="error-label">
+        <span>ERROR</span> &nbsp;/&nbsp; OFF TRACK
+      </div>
+      <div class="error-code">4<span>0</span>4<span>.</span></div>
+      <div class="error-msg">You went off road.<br />This page doesn't exist.</div>
+      <a href={`${b}/`} class="btn-home">
+        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        Back to Start
+      </a>
+    </div>
+    <div class="error-bg-num">404</div>
+  </div>
+</BaseLayout>
+
+<style>
+  .top-bar { background: var(--black); border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; height: 36px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+  .top-bar-left { display: flex; align-items: center; gap: 10px; }
+  .live-dot { width: 7px; height: 7px; background: var(--orange); border-radius: 50%; animation: pulse 2s infinite; }
+  .top-bar-left span { color: var(--gray-light); }
+  .top-bar-left span b { color: var(--white); }
+  .top-bar-right { display: flex; align-items: center; gap: 16px; color: var(--gray); font-size: 10px; }
+  .hl { color: var(--orange); }
+
+  .error-page {
+    min-height: calc(100vh - 36px - 56px);
+    background-color: var(--dark);
+    background-image: var(--stripe);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .error-inner {
+    position: relative;
+    z-index: 2;
+    text-align: center;
+    padding: 60px 40px;
+  }
+
+  .error-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--gray);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 24px;
+  }
+  .error-label span { color: var(--orange); }
+
+  .error-code {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: clamp(100px, 18vw, 200px);
+    font-weight: 900;
+    line-height: 0.85;
+    text-transform: uppercase;
+    letter-spacing: -0.02em;
+    margin-bottom: 28px;
+  }
+  .error-code span { color: var(--orange); }
+
+  .error-msg {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 22px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--gray-light);
+    line-height: 1.4;
+    margin-bottom: 40px;
+  }
+
+  .btn-home {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--orange);
+    color: var(--white);
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 12px 28px;
+    transition: background 0.15s;
+  }
+  .btn-home:hover { background: var(--orange-dim); }
+
+  .error-bg-num {
+    position: absolute;
+    bottom: -40px;
+    right: -20px;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: clamp(200px, 30vw, 400px);
+    font-weight: 900;
+    color: rgba(255,255,255,0.025);
+    line-height: 1;
+    pointer-events: none;
+    user-select: none;
+    letter-spacing: -0.04em;
+  }
+</style>
