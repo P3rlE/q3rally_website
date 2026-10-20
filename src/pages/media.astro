@@ -92,6 +92,7 @@ const totalItems = videos.length + screenshots.length;
             data-lightbox
             data-src={urlFor(s.image).width(1920).fit('max').auto('format').url()}
             data-caption={s.caption ?? ''}
+            data-download={urlFor(s.image).ignoreImageParams().url() + '?dl='}
             data-index={i}
             aria-label={s.caption ?? `Screenshot ${i + 1}`}
           >
@@ -129,6 +130,7 @@ const totalItems = videos.length + screenshots.length;
     <img id="lb-img" src="" alt="" />
     <div id="lb-caption" class="lb-caption"></div>
     <div id="lb-counter" class="lb-counter"></div>
+    <a id="lb-download" class="lb-download" download>↓ DOWNLOAD ORIGINAL</a>
   </div>
 </div>
 
@@ -138,6 +140,7 @@ const totalItems = videos.length + screenshots.length;
   const lbImg = document.getElementById('lb-img');
   const lbCaption = document.getElementById('lb-caption');
   const lbCounter = document.getElementById('lb-counter');
+  const lbDownload = document.getElementById('lb-download') as HTMLAnchorElement;
   let current = 0;
 
   function open(index) {
@@ -147,6 +150,8 @@ const totalItems = videos.length + screenshots.length;
     lbImg.alt = card.dataset.caption;
     lbCaption.textContent = card.dataset.caption;
     lbCounter.textContent = `${current + 1} / ${cards.length}`;
+    lbDownload.href = card.dataset.download;
+    lbDownload.setAttribute('aria-label', `Download original: ${card.dataset.caption || `Screenshot ${current + 1}`}`);
     lb.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
   }
@@ -155,6 +160,7 @@ const totalItems = videos.length + screenshots.length;
     lb.setAttribute('aria-hidden', 'true');
     document.body.style.overflow = '';
     lbImg.src = '';
+    lbDownload.removeAttribute('href');
   }
 
   function prev() { open((current - 1 + cards.length) % cards.length); }
@@ -230,9 +236,13 @@ const totalItems = videos.length + screenshots.length;
   .lightbox[aria-hidden="false"] { opacity: 1; pointer-events: all; }
   .lb-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.92); }
   .lb-content { position: relative; z-index: 1; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; align-items: center; gap: 12px; }
-  .lb-content img { max-width: 90vw; max-height: 80vh; object-fit: contain; display: block; }
+  .lb-content img { max-width: 90vw; max-height: 70vh; object-fit: contain; display: block; }
   .lb-caption { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray); letter-spacing: 0.1em; text-transform: uppercase; }
   .lb-counter { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: #444; letter-spacing: 0.1em; }
+  .lb-download { display: inline-flex; align-items: center; justify-content: center; padding: 10px 16px; border: 1px solid var(--orange); color: var(--orange); background: var(--dark2); font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: 0.08em; }
+  .lb-download:hover { background: var(--orange); color: var(--white); }
+  .lb-download:focus-visible { outline: 2px solid var(--white); outline-offset: 3px; }
+  .lightbox[aria-hidden="true"] { visibility: hidden; }
   .lb-close { position: fixed; top: 24px; right: 28px; z-index: 2; background: rgba(20,20,20,0.8); border: 1px solid #333; color: var(--gray-light); width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: border-color 0.15s; }
   .lb-close:hover { border-color: var(--orange); color: var(--orange); }
   .lb-prev, .lb-next { position: fixed; top: 50%; transform: translateY(-50%); z-index: 2; background: rgba(20,20,20,0.8); border: 1px solid #333; color: var(--gray-light); width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: border-color 0.15s; }

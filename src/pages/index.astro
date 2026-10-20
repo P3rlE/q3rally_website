@@ -1,12 +1,15 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Nav from '../components/Nav.astro';
-import { getLatestBuild, getNewsPosts, getCounts, getCars, getMaps, getScreenshots, getCurrentBuilds, urlFor } from '../lib/sanity.js';
+import { getLatestBuild, getNewsPosts, getCounts, getCars, getMaps, getScreenshots, getCurrentBuilds, getGameModes, urlFor } from '../lib/sanity.js';
+
+import { mergeGameModes } from '../data/gameModes.js';
 
 const b = import.meta.env.BASE_URL.replace(/\/$/, '');
 const build = await getLatestBuild();
 const news = await getNewsPosts();
 const counts = await getCounts();
+const gameModeCount = mergeGameModes(await getGameModes()).length;
 const cars = await getCars();
 const maps = await getMaps();
 const screenshots = await getScreenshots();
@@ -44,11 +47,12 @@ const winPlatform = build?.platforms?.find(p => p.name === 'Windows');
       <span>
         <b>BUILD {build?.version ?? '—'}</b>
         &nbsp;·&nbsp; LIVE
+        &nbsp;·&nbsp; <b>{gameModeCount} GAME MODES</b>
         &nbsp;·&nbsp; <b>{counts.cars} VEHICLES</b>
         &nbsp;·&nbsp; <b>{counts.maps} MAPS</b>
         &nbsp;·&nbsp; <b>{counts.powerups} POWERUPS</b>
         &nbsp;·&nbsp; <b>{counts.weapons} WEAPONS</b>
-        &nbsp;·&nbsp; <b>{counts.roadside} ROADSIDE</b>
+        &nbsp;·&nbsp; <b>{counts.roadside} ROADSIDE OBJECTS</b>
       </span>
     </div>
     <div class="top-bar-right">
@@ -161,7 +165,7 @@ const winPlatform = build?.platforms?.find(p => p.name === 'Windows');
     </div>
     <div class="stat-block">
       <div class="stat-dot static"></div>
-      <div><div class="stat-num" id="stat-visitors">—</div><div class="stat-label">Total Visitors</div></div>
+      <div><div class="stat-num" id="stat-visitors">—</div><div class="stat-label">Total Visits</div></div>
     </div>
     <div class="stat-block">
       <div class="stat-dot static"></div>
@@ -169,11 +173,11 @@ const winPlatform = build?.platforms?.find(p => p.name === 'Windows');
     </div>
     <div class="stat-block">
       <div class="stat-dot static"></div>
-      <div><div class="stat-num" id="stat-downloads">—</div><div class="stat-label">Total Downloads</div></div>
+      <div><div class="stat-num" id="stat-downloads">—</div><div class="stat-label">Download Clicks</div></div>
     </div>
     <div class="stat-block">
       <div class="stat-dot static"></div>
-      <div><div class="stat-num" id="stat-today">—</div><div class="stat-label">Visitors Today</div></div>
+      <div><div class="stat-num" id="stat-today">—</div><div class="stat-label">Visits Today</div></div>
     </div>
   </div>
 
@@ -293,6 +297,7 @@ const winPlatform = build?.platforms?.find(p => p.name === 'Windows');
       <div class="footer-col-title">Game</div>
       <ul class="footer-links">
         <li><a href={`${b}/downloads`}>Downloads</a></li>
+        <li><a href={`${b}/game-modes`}>Game Modes</a></li>
         <li><a href={`${b}/cars`}>Cars</a></li>
         <li><a href={`${b}/maps`}>Maps</a></li>
         <li><a href={`${b}/powerups`}>Powerups / Holdables</a></li>
@@ -315,24 +320,6 @@ const winPlatform = build?.platforms?.find(p => p.name === 'Windows');
     </div>
   </footer>
 </BaseLayout>
-
-<!-- Stats fetch from Umami API (runs client-side) -->
-<script>
-  async function loadStats() {
-    try {
-      const res = await fetch('/api/stats.php');
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.online)     document.getElementById('stat-online').textContent     = data.online.toLocaleString('de-DE');
-      if (data.visitors)   document.getElementById('stat-visitors').textContent   = data.visitors.toLocaleString('de-DE');
-      if (data.pageviews)  document.getElementById('stat-pageviews').textContent  = data.pageviews.toLocaleString('de-DE');
-      if (data.downloads)  document.getElementById('stat-downloads').textContent  = data.downloads.toLocaleString('de-DE');
-      if (data.today)      document.getElementById('stat-today').textContent      = data.today.toLocaleString('de-DE');
-    } catch (e) { /* stats unavailable, show dashes */ }
-  }
-  loadStats();
-  setInterval(loadStats, 30000);
-</script>
 
 <style>
   /* TOP BAR */

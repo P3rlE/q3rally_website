@@ -37,7 +37,7 @@ const cars = await getCars();
         <div class={`car-card ${i === 0 ? 'featured' : ''}`}>
           <div class="car-img">
             {car.image
-              ? <img src={urlFor(car.image).width(1200).fit('max').auto('format').url()} alt={car.name} loading={i < 4 ? 'eager' : 'lazy'} />
+              ? <img src={urlFor(car.image).ignoreImageParams().width(1200).fit('max').auto('format').url()} alt={car.name} loading={i < 4 ? 'eager' : 'lazy'} />
               : <span class="placeholder">[ IMAGE ]</span>
             }
             <div class="car-img-overlay"></div>
@@ -52,6 +52,26 @@ const cars = await getCars();
     </div>
   </section>
 </BaseLayout>
+
+<script>
+  const grid = document.querySelector('.cars-grid');
+  const cards = Array.from(grid?.querySelectorAll<HTMLElement>('.car-card') ?? []);
+
+  if (grid && cards.length > 0) {
+    const featured = cards[Math.floor(Math.random() * cards.length)];
+    cards.forEach(card => card.classList.toggle('featured', card === featured));
+    grid.prepend(featured);
+
+    const image = featured.querySelector('img');
+    if (image) {
+      image.loading = 'eager';
+      image.fetchPriority = 'high';
+    }
+    grid.querySelectorAll('.car-num').forEach((number, index) => {
+      number.textContent = String(index + 1).padStart(2, '0');
+    });
+  }
+</script>
 
 <style>
   .top-bar { background: var(--black); border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; height: 36px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
@@ -81,7 +101,7 @@ const cars = await getCars();
   .car-card.featured .car-img { aspect-ratio: 2/1; }
   .car-card.featured .car-name { font-size: 30px; }
   .car-img { aspect-ratio: 4/3; background-color: #161616; background-image: var(--stripe); position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-  .car-img img { width: 100%; height: 100%; object-fit: cover; }
+  .car-img img { width: 100%; height: 100%; object-fit: contain; object-position: center; }
   .placeholder { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: #2e2e2e; }
   .car-img-overlay { position: absolute; inset: 0; background: rgba(255,85,0,0.07); opacity: 0; transition: opacity 0.2s; border: 1px solid rgba(255,85,0,0.25); }
   .car-num { position: absolute; top: 12px; right: 12px; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: 0.1em; color: #2e2e2e; }

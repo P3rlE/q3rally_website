@@ -41,6 +41,7 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
     <button class="main-tab" data-tab="activity">RECENT ACTIVITY</button>
     <button class="main-tab" data-tab="rankings">PLAYER RANKINGS</button>
     <button class="main-tab" data-tab="ghosts">GHOSTS</button>
+    <a class="admin-link" href="https://ladder.q3rally.com/admin.php">ADMIN ↗</a>
   </div>
 
   <!-- ── LEADERBOARD TAB ── -->
@@ -199,6 +200,9 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
   .section-label span { color: var(--orange); }
   .page-title { font-family: 'Barlow Condensed', sans-serif; font-size: clamp(64px, 8vw, 110px); font-weight: 900; line-height: 0.88; text-transform: uppercase; }
   .page-title .orange { color: var(--orange); font-style: italic; }
+  .admin-link { margin-left: auto; align-self: center; padding: 12px 16px; color: var(--gray-light); font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: 0.1em; white-space: nowrap; }
+  .admin-link:hover { color: var(--orange); }
+  .admin-link:focus-visible { outline: 2px solid var(--orange); outline-offset: -2px; }
   .page-header-stats { display: flex; gap: 40px; flex-wrap: wrap; align-items: flex-end; }
   .hstat { text-align: right; }
   .hstat-val { font-family: 'Barlow Condensed', sans-serif; font-size: 44px; font-weight: 900; line-height: 1; color: var(--white); }

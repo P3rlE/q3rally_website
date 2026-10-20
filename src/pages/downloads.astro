@@ -102,7 +102,7 @@ function showV(category: string) {
               <div class="release-body">
                 <div class="platforms-grid">
                   {release.platforms?.map(p => (
-                    <a href={p.url ?? '#'} class={`platform-card${p.recommended ? ' recommended' : ''}`} data-umami-event="download" data-umami-event-file={p.url?.split('/').pop() ?? ''} data-umami-event-platform={p.name}>
+                    <a href={p.url ?? '#'} class={`platform-card${p.recommended ? ' recommended' : ''}`} data-counter-download>
                       {p.recommended && <div class="rec-badge">RECOMMENDED</div>}
                       <div class="platform-top">
                         <div class="platform-icon" set:html={platformIcons[p.name] ?? ''} />
@@ -152,7 +152,7 @@ function showV(category: string) {
                 <div class="addon-sidebar">
                   <div class="platforms-grid addon-platforms">
                     {release.platforms?.map(p => (
-                      <a href={p.url ?? '#'} class={`platform-card${p.recommended ? ' recommended' : ''}`} data-umami-event="download" data-umami-event-file={p.url?.split('/').pop() ?? ''} data-umami-event-platform={p.name}>
+                      <a href={p.url ?? '#'} class={`platform-card${p.recommended ? ' recommended' : ''}`} data-counter-download>
                         {p.recommended && <div class="rec-badge">RECOMMENDED</div>}
                         <div class="platform-top">
                           <div class="platform-icon" set:html={platformIcons[p.name] ?? ''} />
@@ -177,7 +177,7 @@ function showV(category: string) {
               <div class="release-body addon-layout">
                 <div class="platforms-grid">
                   {release.platforms?.map(p => (
-                    <a href={p.url ?? '#'} class={`platform-card${p.recommended ? ' recommended' : ''}`} data-umami-event="download" data-umami-event-file={p.url?.split('/').pop() ?? ''} data-umami-event-platform={p.name}>
+                    <a href={p.url ?? '#'} class={`platform-card${p.recommended ? ' recommended' : ''}`} data-counter-download>
                       {p.recommended && <div class="rec-badge">RECOMMENDED</div>}
                       <div class="platform-top">
                         <div class="platform-icon" set:html={platformIcons[p.name] ?? ''} />

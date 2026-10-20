@@ -1,0 +1,54 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Nav from '../components/Nav.astro';
+import {getLatestBuild, getGameModes, urlFor} from '../lib/sanity.js';
+import {mergeGameModes} from '../data/gameModes.js';
+const b = import.meta.env.BASE_URL.replace(/\/$/, '');
+const [build, overrides] = await Promise.all([getLatestBuild(), getGameModes()]);
+const modes = mergeGameModes(overrides);
+const categories = [
+  {id:'race', name:'Race', tagline:'Chase the clock. Own the track.'},
+  {id:'combat', name:'Combat', tagline:'Hit hard. Stay alive.'},
+  {id:'team', name:'Team', tagline:'Drive together. Win together.'},
+];
+---
+<BaseLayout title="Q3Rally — Game Modes" description="Explore Q3Rally game modes: racing, demolition, team battles, Capture the Flag and more.">
+  <Nav slot="nav" active={`${b}/game-modes`} build={build} />
+  <header class="page-header">
+    <div class="section-label">GAME MODES / RACE · COMBAT · TEAM</div>
+    <h1>CHOOSE YOUR<br /><span>CHAOS.</span></h1>
+    <p>From pure speed to all-out arena battles. Find your next challenge.</p>
+    <nav class="category-links" aria-label="Game mode categories">
+      {categories.map(category => <a href={`#${category.id}`}>{category.name} <span>{modes.filter(mode => mode.category === category.id).length}</span></a>)}
+    </nav>
+  </header>
+  {modes.length === 0 && <p class="wiki-note">Game modes will appear here once published in Sanity Studio.</p>}
+  {categories.filter(category => modes.some(mode => mode.category === category.id)).map(category => (
+    <section id={category.id} class="mode-section" aria-labelledby={`${category.id}-title`}>
+      <div class="section-heading"><h2 id={`${category.id}-title`}>{category.name}</h2><p>{category.tagline}</p></div>
+      <div class="mode-grid">
+        {modes.filter(mode => mode.category === category.id).map(mode => (
+          <article class="mode-card" id={`mode-${mode.gametype}`}>
+            {mode.image && <img class="mode-image" src={urlFor(mode.image).width(960).fit('max').auto('format').url()} alt={mode.name} loading="lazy" />}
+            <div class="mode-body">
+              <div class="mode-meta"><span>g_gametype {mode.gametype}</span>{mode.development && <strong>DEVELOPMENT BUILD</strong>}</div>
+              <h3>{mode.name}</h3>
+              <p class="description">{mode.description}</p>
+              {mode.objective && <div class="objective"><span>THE GOAL</span><p>{mode.objective}</p></div>}
+              {mode.note && <p class="mode-note">{mode.note}</p>}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  ))}
+  <aside class="wiki-note">
+    <h2>READY TO SET UP A MATCH?</h2>
+    <p>Server modes are selected with <code>g_gametype</code>. Mode numbers changed in v0.7c, so update older team-mode configurations.</p>
+    <p>Many race tracks support short, medium and long variants, plus reverse racing. Sprint requires a dedicated start and finish.</p>
+    <a href="https://github.com/Q3Rally-Team/q3rally/wiki/Game-Modes" target="_blank" rel="noopener noreferrer">FULL RULES &amp; SERVER SETTINGS ↗</a>
+  </aside>
+</BaseLayout>
+<style>
+.page-header{padding:56px 80px 40px;background-color:var(--dark);background-image:var(--stripe);border-bottom:1px solid #252525}.section-label{font-family:'Share Tech Mono',monospace;font-size:11px;letter-spacing:.12em;color:var(--orange);margin-bottom:18px}h1{font-family:'Barlow Condensed',sans-serif;font-size:clamp(60px,8vw,110px);font-weight:900;line-height:.9}h1 span{color:var(--orange);font-style:italic}.page-header>p{color:var(--gray-light);margin-top:24px;max-width:560px}.category-links{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}.category-links a{padding:10px 18px;border:1px solid #454545;font-family:'Share Tech Mono',monospace;font-size:12px;text-transform:uppercase}.category-links a:hover{border-color:var(--orange);color:var(--orange)}.category-links span{color:var(--gray);margin-left:12px}.mode-section{padding:44px 80px 20px;scroll-margin-top:80px}.section-heading{display:flex;align-items:baseline;gap:20px;flex-wrap:wrap;margin-bottom:20px}.section-heading h2{font-family:'Barlow Condensed',sans-serif;font-size:32px;font-weight:900;text-transform:uppercase;color:var(--orange)}.section-heading p{color:var(--gray);font-size:14px}.mode-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.mode-card{background:var(--dark2);border:1px solid #292929;scroll-margin-top:80px}.mode-body{padding:24px;overflow-wrap:anywhere}.mode-image{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}.mode-meta{display:flex;flex-wrap:wrap;gap:10px;color:var(--gray);font-family:'Share Tech Mono',monospace;font-size:10px}.mode-meta strong{color:var(--orange);font-weight:400}h3{font-family:'Barlow Condensed',sans-serif;font-size:30px;font-weight:900;text-transform:uppercase;line-height:1.05;margin:16px 0}.description{font-size:14px;color:var(--gray-light);line-height:1.7;white-space:pre-line}.objective{border-top:1px solid #333;margin-top:22px;padding-top:16px}.objective>span{font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:.1em;color:var(--orange)}.objective p{margin-top:6px;font-size:14px}.mode-note{font-size:12px;color:var(--gray-light);border-left:2px solid var(--orange);padding-left:12px;margin-top:18px;white-space:pre-line}.wiki-note{margin:32px 80px 64px;padding:28px;border:1px solid #333;background:var(--dark)}.wiki-note h2{font-family:'Barlow Condensed',sans-serif;font-size:26px}.wiki-note p{color:var(--gray-light);font-size:14px;margin:12px 0}.wiki-note a{display:inline-block;color:var(--orange);font-family:'Share Tech Mono',monospace;font-size:11px;margin-top:12px}a:focus-visible{outline:2px solid var(--orange);outline-offset:4px}@media(max-width:1100px){.mode-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:768px){.page-header{padding:36px 20px}.mode-section{padding:28px 16px 0}.mode-grid{grid-template-columns:1fr}.mode-body{padding:20px}.wiki-note{margin:28px 16px 40px;padding:20px}}
+</style>

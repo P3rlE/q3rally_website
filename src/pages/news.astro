@@ -122,12 +122,12 @@ function renderBody(body: any[]): string {
   .post-title { font-family: 'Barlow Condensed', sans-serif; font-size: clamp(36px, 4vw, 56px); font-weight: 900; text-transform: uppercase; letter-spacing: 0.02em; line-height: 1; margin-bottom: 24px; }
 
   .post-body { max-width: 720px; font-size: 15px; color: var(--gray-light); line-height: 1.75; }
-  .post-body p { margin-bottom: 16px; }
-  .post-body p:last-child { margin-bottom: 0; }
-  .post-body h2 { font-family: 'Barlow Condensed', sans-serif; font-size: 28px; font-weight: 900; text-transform: uppercase; color: var(--white); margin: 28px 0 12px; }
-  .post-body h3 { font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 900; text-transform: uppercase; color: var(--white); margin: 20px 0 8px; }
-  .post-body strong { color: var(--white); font-weight: 600; }
-  .post-body em { color: var(--gray-light); font-style: italic; }
+  .post-body :global(p) { margin-bottom: 16px; }
+  .post-body :global(p:last-child) { margin-bottom: 0; }
+  .post-body :global(h2) { font-family: 'Barlow Condensed', sans-serif; font-size: 28px; font-weight: 900; text-transform: uppercase; color: var(--white); margin: 28px 0 12px; }
+  .post-body :global(h3) { font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 900; text-transform: uppercase; color: var(--white); margin: 20px 0 8px; }
+  .post-body :global(strong) { color: var(--white); font-weight: 600; }
+  .post-body :global(em) { color: var(--gray-light); font-style: italic; }
 
   @media (max-width: 768px) {
     .top-bar { padding: 0 16px; height: 32px; font-size: 10px; }

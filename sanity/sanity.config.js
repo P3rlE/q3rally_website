@@ -21,6 +21,9 @@ export default defineConfig({
               S.documentTypeList('newsPost').title('News Posts')
             ),
             S.divider(),
+            S.listItem().title('Game Modes').child(
+              S.documentTypeList('gameMode').title('Game Modes')
+            ),
             S.listItem().title('Cars').child(
               S.documentTypeList('car').title('Cars')
             ),

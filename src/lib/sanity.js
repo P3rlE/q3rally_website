@@ -123,3 +123,9 @@ export async function getCounts() {
   ]);
   return { cars, maps, powerups, weapons, roadside };
 }
+
+export async function getGameModes() {
+  return client.fetch(`*[_type == "gameMode"] | order(_updatedAt asc) {
+    gametype, name, category, description, objective, note, development, image, orderRank
+  }`);
+}
