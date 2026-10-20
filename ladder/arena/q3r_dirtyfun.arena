@@ -1,0 +1,49 @@
+{
+//MAP FILE NAME
+map "q3r_dirtyfun"
+
+//IN-GAME MAP NAME
+longname "Dirty Fun"
+
+//AUTHOR OF THE MAP
+author "Stecki & insellium"
+
+//GAME TYPE SUPPORTS
+type "q3r_racing q3r_team_racing q3r_elimination"
+
+//CUSTOM BOTS
+bots "Zack Kuro Paul Minori Josh"
+
+//PLAYER STARTS
+starts "8"
+
+//LAPS
+laps "3"
+
+//LAPTIME
+laptime "11 & 13 & 31 sec"
+
+//CHECKPOINTS
+checkpoints "4 & 5 & 9"
+
+//OBSERVER SPOTS
+observerspots "6"
+
+//WEAPONS
+weapons "0"
+
+//POWERUPS
+powerups "0"
+
+//REVERSABLE
+reversable "1"
+
+//TRACK LENGTHS
+tracklengths "0 1 2"
+
+//BOT SUPPORTS
+botsupport "Bad"
+
+//TEAMS
+teams "All"
+}

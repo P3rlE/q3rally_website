@@ -156,7 +156,7 @@ purging those URLs. Installing/upgrading the uploader itself never deletes conte
 ## Website backlinks
 
 The existing server's index.php and admin.php also have a backlink to
-https://www.q3rally.com/. Those complete backend files are not in this repository.
+https://www.q3rally.com/. The exported backend files are now versioned under ladder/.
 To reproduce this change on a fresh copy of that backend, run
 `python3 add-website-links.py` as the owner of the Ladder files. It backs up the
 files privately, validates PHP syntax and skips pages already containing the link.

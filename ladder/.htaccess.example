@@ -1,0 +1,3 @@
+# Server-only setting omitted: LADDER_ADMIN_PASSWORD (SetEnv). Configure outside Git.
+SetEnv LADDER_NOTIFY_EMAIL "admin@example.com"
+SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1

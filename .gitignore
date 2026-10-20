@@ -14,3 +14,9 @@ __pycache__/
 *.py[cod]
 upload/
 files/
+
+# Ladder runtime state and private Apache configuration
+/ladder/data/
+/ladder/.htaccess
+/ladder/.env*
+/ladder/*.bak

@@ -1,0 +1,46 @@
+{
+//MAP FILE NAME
+map "q3r_dm02"
+
+//IN-GAME MAP NAME
+longname "Classic Demolition Derby"
+
+//AUTHOR OF THE MAP
+author "gout"
+
+//GAME TYPE SUPPORTS
+type "q3r_derby q3r_dm q3r_team_dm"
+
+//CUSTOM BOTS
+bots "Emma Ivan Paul Steve"
+
+//PLAYER STARTS
+starts "8"
+
+//LAPTIME
+laptime ""
+
+//CHECKPOINTS
+checkpoints ""
+
+//OBSERVER SPOTS
+observerspots "1"
+
+//WEAPONS
+weapons "RL,PG,SG"
+
+//POWERUPS
+powerups "1"
+
+//REVERSABLE
+reversable ""
+
+//TRACK LENGTHS
+tracklengths ""
+
+//BOT SUPPORTS
+botsupport "Good"
+
+//TEAMS
+teams "All"
+}

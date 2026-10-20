@@ -1,8 +1,8 @@
 # Q3Rally website development and deployment
 
 This repository contains the Astro website, Sanity Studio schemas, first-party
-counter and reusable server-side Ladder content-uploader extension. It does not
-contain the complete independent Ladder backend running at ladder.q3rally.com.
+counter and reusable server-side Ladder content-uploader extension. The exported PHP Ladder backend is in ladder/, including its static images and
+arena definitions. Runtime state and private server configuration are excluded.
 
 ## Local setup
 
@@ -72,8 +72,9 @@ docs/game-mode-cms-fix.md for details and backup locations.
 The public website links to the existing ladder admin.php. The ladder-content/
 extension adds PK3 upload/delete management using that backend's existing keys.php
 login/CSRF functions. Its installer preserves the existing admin file with a backup
-and adds only a navigation link. The full server's admin.php, index.php, keys.php,
-match data and other server-only modifications must be backed up separately.
+and adds only a navigation link. The current exported admin.php, index.php, keys.php and related backend files
+are versioned under ladder/. Match/player/key data remain server-only and must
+be backed up separately; see ladder/SERVER-CONFIG.md.
 The reproducible add-website-links.py helper records the manual website-backlink
 changes to the existing ladder index/admin pages. It is idempotent and does not
 contain the backend source or credentials. See ladder-content/README.md for

@@ -1,0 +1,49 @@
+{
+//MAP FILE NAME
+map "q3r_downtown"
+
+//IN-GAME MAP NAME
+longname "DownTown"
+
+//AUTHOR OF THE MAP
+author "OliverV"
+
+//GAME TYPE SUPPORTS
+type "q3r_racing q3r_team_racing q3r_elimination"
+
+//CUSTOM BOTS
+bots "Tobias Josh Bee Paul Ivan"
+
+//PLAYER STARTS
+starts "8"
+
+//LAPS
+laps "3"
+
+//LAPTIME
+laptime "1 min 04 sec"
+
+//CHECKPOINTS
+checkpoints "25"
+
+//OBSERVER SPOTS
+observerspots "0"
+
+//WEAPONS
+weapons "0"
+
+//POWERUPS
+powerups "0"
+
+//REVERSABLE
+reversable "0"
+
+//TRACK LENGTHS
+tracklengths "1"
+
+//BOT SUPPORTS
+botsupport "Very bad"
+
+//TEAMS
+teams "All"
+}

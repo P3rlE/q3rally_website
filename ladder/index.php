@@ -1,0 +1,7926 @@
+<?php
+// Lightweight Ladder API for simple webspace deployments.
+// Store match payloads as JSON files under data/.
+
+declare(strict_types=1);
+
+// ── CORS ──────────────────────────────────────────────────────────────────────
+$allowedOrigins = ['https://www.q3rally.com', 'https://q3rally.com'];
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if (in_array($origin, $allowedOrigins, true)) {
+    header('Access-Control-Allow-Origin: ' . $origin);
+} else {
+    header('Access-Control-Allow-Origin: https://www.q3rally.com');
+}
+header('Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Upload-Token');
+header('Access-Control-Max-Age: 86400');
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
+
+const DATA_DIR  = __DIR__ . '/data';
+const ARENA_DIR = __DIR__ . '/arena';
+const INDEX_FILE    = __DIR__ . '/data/match_index.json';
+const PROFILES_DIR  = __DIR__ . '/data/profiles';
+if (!is_dir(DATA_DIR)) {
+    if (!mkdir(DATA_DIR, 0775, true) && !is_dir(DATA_DIR)) {
+        send_error(500, 'Failed to create data directory.');
+    }
+}
+if (!is_dir(PROFILES_DIR)) {
+    mkdir(PROFILES_DIR, 0775, true);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECURITY CONFIGURATION
+// Per-server keys are managed via register.php / admin.php.
+// ─────────────────────────────────────────────────────────────────────────────
+const LADDER_VERSION        = '1.0.16';
+const LADDER_MAX_BODY_BYTES    = 524288;  // 512 KB max POST body
+const LADDER_RATE_LIMIT_MAX    = 30;      // max POST requests per window per IP
+const LADDER_RATE_LIMIT_SERVER_MAX = 120; // max POST requests per window per approved server key
+const LADDER_RATE_LIMIT_WINDOW = 60;      // window in seconds
+const LADDER_WRITE_LOCK_FILE   = __DIR__ . '/data/ladder_write.lock';
+const LADDER_RATE_FILE_PREFIX  = 'rl_';   // rate-limit state file prefix
+
+require_once __DIR__ . '/keys.php';
+require_once __DIR__ . '/ghosts.php';
+
+// Move a key file from the old, web-reachable location data/server_keys.json
+// into data/private/ on the first request after an update.
+try {
+    keys_prepare_storage();
+} catch (RuntimeException $e) {
+    error_log('[ladder] key storage: ' . $e->getMessage());
+}
+
+const LADDER_RACE_MODES = [
+    'GT_RACING', 'GT_RACING_DM', 'GT_SPRINT', 'GT_TEAM_RACING', 'GT_TEAM_RACING_DM',
+];
+const LADDER_DEATHMATCH_MODES = [
+    'GT_DEATHMATCH', 'GT_TEAM',
+];
+const LADDER_DERBY_MODES = [
+    'GT_DERBY',
+];
+const LADDER_SURVIVAL_MODES = [
+    'GT_LCS',
+];
+const LADDER_OBJECTIVE_MODES = [
+    'GT_CTF', 'GT_CTF4', 'GT_DOMINATION', 'GT_KOTH', 'GT_AUTOBALL', 'GT_ELIMINATION',
+];
+
+final class LadderApiException extends RuntimeException
+{
+    private string $errorCode;
+    /** @var array<string, mixed> */
+    private array $details;
+
+    /**
+     * @param array<string, mixed> $details
+     */
+    public function __construct(int $statusCode, string $errorCode, string $message, array $details = [])
+    {
+        parent::__construct($message, $statusCode);
+        $this->errorCode = $errorCode;
+        $this->details = $details;
+    }
+
+    public function statusCode(): int
+    {
+        return $this->getCode() > 0 ? $this->getCode() : 400;
+    }
+
+    public function errorCode(): string
+    {
+        return $this->errorCode;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function details(): array
+    {
+        return $this->details;
+    }
+}
+
+function ladder_check_rate_limit(): void
+{
+    // Approved (active, non-offline) server keys get their own, larger bucket
+    // per key: a busy dedicated server uploads matches and a ghost for every
+    // new session best and must not share the per-IP limit for players.
+    // The key is only looked up here; keys_require_auth() still checks it.
+    $header   = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+    $provided = strncasecmp($header, 'Bearer ', 7) === 0 ? trim(substr($header, 7)) : '';
+    $bucket   = 'post';
+    $limit    = LADDER_RATE_LIMIT_MAX;
+    $perIp    = true;
+    if ($provided !== '') {
+        $record = keys_find_by_key($provided);
+        if ($record !== null && ($record['status'] ?? '') === 'active' && !keys_is_offline($record)) {
+            $bucket = 'post_key_' . keys_key_id($provided);
+            $limit  = LADDER_RATE_LIMIT_SERVER_MAX;
+            $perIp  = false;
+        }
+    }
+
+    // Locked read-modify-write; a request over the limit is not counted.
+    $count = keys_ip_counter($bucket, LADDER_RATE_LIMIT_WINDOW, 'add', $perIp, $limit);
+    if ($count >= $limit) {
+        http_response_code(429);
+        header('Content-Type: application/json');
+        header('Retry-After: ' . LADDER_RATE_LIMIT_WINDOW);
+        echo json_encode(['error' => 'Rate limit exceeded. Try again later.']);
+        exit;
+    }
+}
+
+/**
+ * Write a file atomically (temporary file + rename): readers see either the
+ * old or the new content, never a truncated or half-written file.
+ * The temporary name does not end in .json, so globs over data/ skip it.
+ */
+function ladder_write_atomic(string $path, string $data): bool
+{
+    $tmp = $path . '.' . bin2hex(random_bytes(4)) . '.tmp';
+    if (file_put_contents($tmp, $data) === false) {
+        @unlink($tmp);
+        return false;
+    }
+    if (!rename($tmp, $path)) {
+        @unlink($tmp);
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Global write lock for match files, the match index and profiles.
+ * Re-entrant within one request; released at the end of the request even
+ * if a handler exits early.
+ */
+function ladder_lock_acquire(): void
+{
+    if (($GLOBALS['ladderWriteLockDepth'] ?? 0) > 0) {
+        $GLOBALS['ladderWriteLockDepth']++;
+        return;
+    }
+    if (!is_dir(DATA_DIR)) {
+        @mkdir(DATA_DIR, 0775, true);
+    }
+    $handle = fopen(LADDER_WRITE_LOCK_FILE, 'c');
+    if ($handle === false || !flock($handle, LOCK_EX)) {
+        throw new RuntimeException('Unable to lock ladder data.');
+    }
+    $GLOBALS['ladderWriteLock'] = $handle;
+    $GLOBALS['ladderWriteLockDepth'] = 1;
+}
+
+function ladder_lock_release(): void
+{
+    $depth = ($GLOBALS['ladderWriteLockDepth'] ?? 0) - 1;
+    if ($depth > 0) {
+        $GLOBALS['ladderWriteLockDepth'] = $depth;
+        return;
+    }
+    $GLOBALS['ladderWriteLockDepth'] = 0;
+    $handle = $GLOBALS['ladderWriteLock'] ?? null;
+    $GLOBALS['ladderWriteLock'] = null;
+    if (is_resource($handle)) {
+        flock($handle, LOCK_UN);
+        fclose($handle);
+    }
+}
+
+/** Run $fn while holding the ladder write lock. */
+function ladder_locked(callable $fn)
+{
+    ladder_lock_acquire();
+    try {
+        return $fn();
+    } finally {
+        ladder_lock_release();
+    }
+}
+
+function ladder_read_body(): string
+{
+    $contentLength = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+    if ($contentLength > LADDER_MAX_BODY_BYTES) {
+        http_response_code(413);
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'Payload too large.']);
+        exit;
+    }
+
+    $body   = '';
+    $stream = fopen('php://input', 'rb');
+    if ($stream === false) {
+        return '';
+    }
+
+    while (!feof($stream)) {
+        $chunk = fread($stream, 8192);
+        if ($chunk === false) {
+            break;
+        }
+        $body .= $chunk;
+        if (strlen($body) > LADDER_MAX_BODY_BYTES) {
+            fclose($stream);
+            http_response_code(413);
+            header('Content-Type: application/json');
+            echo json_encode(['error' => 'Payload too large.']);
+            exit;
+        }
+    }
+
+    fclose($stream);
+    return $body;
+}
+
+function ladder_pipeline_log(string $event, array $fields = []): void
+{
+    $parts = [];
+    foreach ($fields as $key => $value) {
+        if (is_bool($value)) {
+            $value = $value ? '1' : '0';
+        } elseif ($value === null) {
+            $value = 'null';
+        } elseif (is_array($value) || is_object($value)) {
+            $value = json_encode($value, JSON_UNESCAPED_SLASHES);
+        }
+        $parts[] = sprintf('%s=%s', (string)$key, (string)$value);
+    }
+
+    $suffix = $parts ? (' ' . implode(' ', $parts)) : '';
+    error_log('[ladder-pipeline] ' . $event . $suffix);
+}
+
+// Command line tools (merge_player.php) load this file for its functions
+// only: no frontend, no API routing.
+if (defined('LADDER_LIBRARY_ONLY')) {
+    return;
+}
+
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+
+// --- Minimal frontend for Q3Rally Ladder (HTML landing page) ---
+try {
+    $accept = $_SERVER['HTTP_ACCEPT'] ?? '';
+    $uri    = $_SERVER['REQUEST_URI'] ?? '/';
+    $script = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
+    $path   = parse_url($uri, PHP_URL_PATH) ?? '/';
+    $path   = rtrim($path, '/');
+    $normalized = $path;
+    if ($script !== '' && strpos($normalized, $script) === 0) {
+        $normalized = substr($normalized, strlen($script));
+    }
+    $normalized = trim($normalized, '/');
+    $isFrontendRoute = ($normalized === '' && ($path === '' || $path === '/' || $path === $script));
+
+    if ($method === 'GET' && $isFrontendRoute && (strpos($accept, 'application/json') === false)) {
+        $apiBase = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
+        $assetBase = rtrim(str_replace('\\', '/', dirname($apiBase)), '/');
+        $assetPrefix = $assetBase === '' ? '' : $assetBase;
+        $flagDe = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1IDMiPjxyZWN0IHdpZHRoPSI1IiBoZWlnaHQ9IjMiIGZpbGw9IiNmZmNlMDAiLz48cmVjdCB3aWR0aD0iNSIgaGVpZ2h0PSIyIiBmaWxsPSIjZGQwMDAwIi8+PHJlY3Qgd2lkdGg9IjUiIGhlaWdodD0iMSIgZmlsbD0iIzAwMCIvPjwvc3ZnPg==';
+        $flagEn = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2MCAzMCI+PGNsaXBQYXRoIGlkPSJhIj48cGF0aCBkPSJNMCAwaDYwdjMwSDB6Ii8+PC9jbGlwUGF0aD48Y2xpcFBhdGggaWQ9ImIiPjxwYXRoIGQ9Ik0zMCAxNUgwdjE1bDYwLTMwSDBWMGw2MCAzMEgzMHYxNUg2MFYwSDMwdjE1eiIvPjwvY2xpcFBhdGg+PGcgY2xpcC1wYXRoPSJ1cmwoI2EpIj48cGF0aCBkPSJNMCAwaDYwdjMwSDB6IiBmaWxsPSIjMDEyMTY5Ii8+PHBhdGggZD0iTTAgMGw2MCAzME02MCAwTDAgMzAiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSI2IiBjbGlwLXBhdGg9InVybCgjYikiLz48cGF0aCBkPSJNMCAwbDYwIDMwTTYwIDBMMCAzMCIgc3Ryb2tlPSIjQzgxMDJFIiBzdHJva2Utd2lkdGg9IjQiIGNsaXAtcGF0aD0idXJsKCNiKSIvPjxwYXRoIGQ9Ik0zMCAwdjMwTTAgMTVoNjAiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIxMCIvPjxwYXRoIGQ9Ik0zMCAwdjMwTTAgMTVoNjAiIHN0cm9rZT0iI0M4MTAyRSIgc3Ryb2tlLXdpZHRoPSI2Ii8+PC9nPjwvc3ZnPg==';
+        header('Content-Type: text/html; charset=UTF-8');
+        ?>
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Q3Rally Ladder Monitor beta</title>
+  <meta name="description" content="Frontend zur Auswertung der gespeicherten Q3Rally-Ladder-Matches.">
+  <style>
+    :root, [data-theme="dark"] {
+      color-scheme: dark;
+      --bg: radial-gradient(1200px 800px at 50% 0%, rgba(255,255,255,0.08), #05050c 60%);
+      --surface: rgba(18, 21, 33, 0.72);
+      --surface-strong: rgba(28, 31, 46, 0.92);
+      --border: rgba(255, 255, 255, 0.12);
+      --border-strong: rgba(255, 255, 255, 0.2);
+      --text: #F5F6FF;
+      --text-muted: #B7BCD6;
+      --accent: #5D8BFF;
+      --accent-soft: rgba(93, 139, 255, 0.18);
+      --theme-icon: "☀️";
+      font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+    }
+
+    [data-theme="light"] {
+      color-scheme: light;
+      --bg: radial-gradient(1200px 800px at 50% 0%, rgba(93,139,255,0.08), #f0f2f8 60%);
+      --surface: rgba(255, 255, 255, 0.85);
+      --surface-strong: rgba(240, 242, 248, 0.97);
+      --border: rgba(0, 0, 0, 0.10);
+      --border-strong: rgba(0, 0, 0, 0.18);
+      --text: #1a1d2e;
+      --text-muted: #4a5080;
+      --accent: #3a6aee;
+      --accent-soft: rgba(58, 106, 238, 0.12);
+      --theme-icon: "🌙";
+    }
+
+    [data-theme="light"] .panel {
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.8);
+    }
+
+    [data-theme="light"] body {
+      background: var(--bg);
+    }
+
+    #theme-toggle {
+      appearance: none;
+      background: var(--surface-strong);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      padding: 6px 10px;
+      transition: background .15s, border-color .15s;
+    }
+    #theme-toggle:hover { background: var(--accent-soft); border-color: var(--accent); }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+      padding: 32px 18px 48px;
+    }
+
+    .page {
+      width: min(1280px, 100%);
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 26px;
+      box-shadow: 0 22px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      backdrop-filter: blur(18px) saturate(120%);
+      -webkit-backdrop-filter: blur(18px) saturate(120%);
+    }
+
+    .hero {
+
+      display: flex;
+      flex-direction: column;
+      gap: 26px;
+    }
+
+    .hero-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+
+    .hero-brand {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .hero-info {
+      display: flex;
+      flex-direction: column;
+
+    }
+
+    .hero img {
+      width: 78px;
+      height: 78px;
+      object-fit: contain;
+      border-radius: 18px;
+      border: 1px solid var(--border-strong);
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .hero h1 {
+      margin: 0 0 6px;
+      font-size: clamp(1.7rem, 2.4vw, 2.15rem);
+      letter-spacing: 0.01em;
+      display: inline-flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+
+    .badge-beta {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 10px 4px;
+      border-radius: 999px;
+      background: rgba(93, 139, 255, 0.18);
+      border: 1px solid rgba(93, 139, 255, 0.45);
+      color: var(--accent);
+      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--text-muted);
+      line-height: 1.6;
+
+      max-width: 52ch;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 12px;
+    }
+
+    .language-toggle {
+      display: inline-flex;
+      gap: 10px;
+      padding: 6px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .language-button {
+      appearance: none;
+      border: none;
+      background: transparent;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      line-height: 1;
+      transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+    }
+
+    .language-button img {
+      display: block;
+      width: 26px;
+      height: 26px;
+      object-fit: contain;
+    }
+
+    .language-button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .language-button.active {
+      box-shadow: inset 0 0 0 2px rgba(93, 139, 255, 0.55);
+      background: rgba(93, 139, 255, 0.18);
+    }
+
+    .main-nav {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 6px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .nav-link {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-size: 0.78rem;
+      padding: 8px 16px;
+      border-radius: 12px;
+      transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease;
+    }
+
+    .nav-link:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .nav-link.active {
+      color: var(--text);
+      background: var(--accent-soft);
+      box-shadow: inset 0 0 0 1px rgba(93, 139, 255, 0.45);
+    }
+
+    .hero-stats {
+      margin: 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      padding: 0;
+      list-style: none;
+    }
+
+    .hero-stats .stat {
+      min-width: 140px;
+      padding: 14px 18px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .hero-stats dt {
+      color: var(--text-muted);
+      font-weight: 500;
+      margin: 0;
+      font-size: 0.9rem;
+    }
+
+    .hero-stats dd {
+      margin: 0;
+      font-weight: 600;
+      font-size: 1.15rem;
+    }
+
+    .controls {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      align-items: end;
+    }
+
+    .tabbed-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .tab-header {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 6px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      align-self: flex-start;
+    }
+
+    .tab-button {
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      padding: 8px 14px;
+      border-radius: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-size: 0.78rem;
+      transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease;
+    }
+
+    .tab-button:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .tab-button.active {
+      color: var(--text);
+      background: var(--accent-soft);
+      box-shadow: inset 0 0 0 1px rgba(93, 139, 255, 0.45);
+    }
+
+    .tab-panel {
+      display: none;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .tab-panel.active {
+      display: flex;
+    }
+
+    #modePanels {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .mode-panel {
+      display: none;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .mode-panel.active {
+      display: flex;
+    }
+
+    .mode-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      align-items: flex-end;
+    }
+
+    .mode-controls label {
+      display: block;
+      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .mode-controls select {
+      appearance: none;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(9, 12, 20, 0.85);
+      color: var(--text);
+      padding: 10px 14px;
+      font-size: 0.95rem;
+      min-width: 220px;
+    }
+
+    .mode-layout {
+      display: grid;
+      grid-template-columns: minmax(260px, 380px) minmax(0, 1fr);
+      gap: 24px;
+      align-items: flex-start;
+    }
+
+    .mode-levelshot {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: center;
+      padding: 16px;
+      border-radius: 18px;
+      background: rgba(10, 15, 26, 0.68);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .mode-levelshot img {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      aspect-ratio: 4 / 3;
+      object-fit: cover;
+    }
+
+    .mode-levelshot figcaption {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    .ghost-note {
+      margin: 12px 0 0;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .mode-levelshot-fallback {
+      margin: 0;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    .mode-meta {
+      display: grid;
+      gap: 6px;
+      width: 100%;
+    }
+
+    .mode-meta span {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .mode-meta strong {
+      font-size: 1rem;
+      color: var(--text);
+    }
+
+    .mode-table-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .mode-table-wrapper h3 {
+      margin: 0;
+      font-size: 0.85rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .table-wrapper {
+      overflow-x: auto;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(10, 15, 26, 0.75);
+    }
+
+    table.leaderboard-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 560px;
+    }
+
+    table.leaderboard-table thead {
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.12em;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    table.leaderboard-table th,
+    table.leaderboard-table td {
+      padding: 14px 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      text-align: left;
+    }
+
+    table.leaderboard-table th:last-child,
+    table.leaderboard-table td:last-child {
+      white-space: nowrap;
+    }
+
+    table.leaderboard-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    table.leaderboard-table tbody tr:nth-child(even) {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    table.leaderboard-table td strong {
+      font-weight: 600;
+      font-size: 1rem;
+    }
+
+    table.leaderboard-table td .meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    .leaderboard-player {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .leaderboard-player span {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+
+    .bot-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 10px 3px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 600;
+      width: fit-content;
+    }
+
+    .leaderboard-value {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .leaderboard-value span {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+
+    .mono {
+      font-family: 'JetBrains Mono', 'Fira Code', 'SFMono-Regular', Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.88rem;
+      letter-spacing: 0.02em;
+    }
+
+    @media (max-width: 720px) {
+      table.leaderboard-table {
+        min-width: 100%;
+      }
+      .hero-actions {
+        align-items: center;
+      }
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      letter-spacing: 0.02em;
+      margin-bottom: 8px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    select,
+    input[type="search"],
+    button:not(.tab-button) {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(8, 12, 24, 0.4);
+      color: inherit;
+      font: inherit;
+    }
+
+    select:focus,
+    input[type="search"]:focus,
+    button:not(.tab-button):focus {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    button:not(.tab-button) {
+      cursor: pointer;
+      background: linear-gradient(135deg, var(--accent), rgba(125, 167, 255, 0.9));
+      border: 1px solid rgba(93, 139, 255, 0.5);
+      font-weight: 600;
+      transition: transform 120ms ease, box-shadow 120ms ease;
+    }
+
+    button:not(.tab-button):hover {
+      transform: translateY(-1px);
+      box-shadow: 0 14px 32px rgba(93, 139, 255, 0.25);
+    }
+
+    .status {
+      margin-top: 4px;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+
+    .status.error {
+      color: #ffb7b7;
+    }
+
+    .stats-grid {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    }
+
+    .stat-card {
+      background: var(--surface-strong);
+      border-radius: 22px;
+      padding: 20px 22px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .stat-card h2 {
+      margin: 0;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      letter-spacing: 0.12em;
+    }
+
+    .stat-card p {
+      margin: 0;
+      font-size: clamp(1.4rem, 2vw, 1.9rem);
+      font-weight: 600;
+    }
+
+    .stat-card span {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    #modeBreakdown {
+      list-style: none;
+      margin: 18px 0 0;
+      padding: 0;
+      display: grid;
+      gap: 10px;
+    }
+
+    #modeBreakdown li {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.92rem;
+      background: rgba(255, 255, 255, 0.04);
+      padding: 10px 14px;
+      border-radius: 12px;
+    }
+
+    #matches {
+      display: grid;
+      gap: 16px;
+    }
+
+    details.match {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 20px;
+      overflow: hidden;
+      background: rgba(13, 18, 30, 0.85);
+    }
+
+    details.match[open] {
+      box-shadow: 0 18px 36px rgba(0, 0, 0, 0.4);
+      border-color: rgba(93, 139, 255, 0.4);
+    }
+
+    details.match summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 18px 22px;
+      display: grid;
+      gap: 12px;
+      grid-template-columns: minmax(120px, auto) 1fr auto;
+      align-items: center;
+    }
+
+    details.match summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .mode-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      border: 1px solid rgba(93, 139, 255, 0.3);
+    }
+
+    .summary-meta {
+      display: grid;
+      gap: 6px;
+      grid-template-columns: repeat(auto-fit, minmax(120px, auto));
+      font-size: 0.92rem;
+      color: var(--text-muted);
+    }
+
+    .summary-meta strong {
+      display: block;
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+
+    .players-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      font-size: 0.85rem;
+    }
+
+    .match-body {
+      padding: 0 22px 22px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      display: grid;
+      gap: 22px;
+    }
+
+    .match-meta {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+
+    .meta-list {
+      margin: 0;
+      display: grid;
+      gap: 12px;
+    }
+
+    .meta-list div {
+      background: rgba(255, 255, 255, 0.04);
+      padding: 12px 14px;
+      border-radius: 12px;
+    }
+
+    .meta-list dt {
+      margin: 0 0 4px;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+    }
+
+    .meta-list dd {
+      margin: 0;
+      font-weight: 600;
+      font-size: 0.95rem;
+      word-break: break-word;
+    }
+
+    .players-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 6px;
+    }
+
+    .players-list li {
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 10px;
+      font-size: 0.92rem;
+    }
+
+    pre.payload {
+      margin: 0;
+      background: rgba(0, 0, 0, 0.55);
+      border-radius: 16px;
+      padding: 16px;
+      overflow-x: auto;
+      font-size: 0.82rem;
+      line-height: 1.55;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .empty-state {
+      padding: 48px 24px;
+      text-align: center;
+      color: var(--text-muted);
+      border: 1px dashed rgba(255, 255, 255, 0.16);
+      border-radius: 18px;
+      background: rgba(14, 18, 29, 0.7);
+    }
+
+    @media (max-width: 720px) {
+      body {
+        padding: 24px 14px 38px;
+      }
+
+      .tab-header {
+        width: 100%;
+        justify-content: center;
+      }
+
+      .mode-layout {
+        /* minmax(0, …): wide tables scroll inside .table-wrapper instead of
+           widening the page */
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .mode-controls select {
+        min-width: 0;
+        width: 100%;
+      }
+
+      .hero-top {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .hero-brand {
+        width: 100%;
+        justify-content: center;
+        text-align: center;
+      }
+
+      .hero-info {
+        align-items: center;
+        text-align: center;
+      }
+
+      .language-toggle {
+        align-self: center;
+      }
+
+      .hero-stats {
+        justify-content: center;
+      }
+
+      .hero-stats .stat {
+
+        text-align: center;
+      }
+
+      details.match summary {
+        grid-template-columns: 1fr;
+        text-align: left;
+      }
+
+      .summary-meta {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* ── Player link ────────────────────────────────────────────────────────── */
+    a.player-link {
+      color: var(--text);
+      text-decoration: none;
+      border-bottom: 1px dotted var(--accent);
+      transition: color .15s, border-color .15s;
+    }
+    a.player-link:hover { color: var(--accent); border-color: var(--accent); }
+
+    /* ── Overlay backdrop ───────────────────────────────────────────────────── */
+    .q3-overlay-backdrop {
+      position: fixed; inset: 0; z-index: 9000;
+      background: rgba(0,0,0,0.72);
+      display: flex; align-items: flex-start; justify-content: center;
+      padding: 20px;
+      overflow-y: auto;
+      animation: fadeIn .15s ease;
+    }
+    @keyframes fadeIn { from { opacity:0 } to { opacity:1 } }
+
+    .q3-overlay {
+      background: var(--surface-strong);
+      border: 1px solid var(--border-strong);
+      border-radius: 20px;
+      width: min(1400px, 100%);
+      max-height: none;
+      overflow-y: visible;
+      padding: 0;
+      position: relative;
+      animation: slideUp .18s ease;
+      margin: auto;
+    }
+    @keyframes slideUp { from { transform: translateY(16px); opacity:0 } to { transform:none; opacity:1 } }
+
+    .q3-overlay-header {
+      display: flex; align-items: center; justify-content: flex-end;
+      padding: 10px 16px;
+      background: var(--accent);
+      border-radius: 20px 20px 0 0;
+      min-height: 44px;
+    }
+    .q3-overlay-title {
+      font-size: 1.1rem; font-weight: 700; color: var(--text);
+      margin: 0 0 16px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .q3-overlay-title-main {
+      font-size: 1.05rem; font-weight: 700; color: #fff;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .q3-overlay-title-sub {
+      display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+      font-size: .78rem; font-weight: 400; color: rgba(255,255,255,0.72);
+    }
+    .q3-overlay-rank-bar {
+      height: 3px; background: rgba(255,255,255,0.2);
+      border-radius: 0; overflow: hidden;
+    }
+    .q3-overlay-rank-bar-fill {
+      height: 100%; background: rgba(255,255,255,0.55);
+      transition: width .4s ease;
+    }
+    .q3-overlay-body {
+      padding: 24px 28px;
+    }
+
+    /* Zweispaltiges Profil-Layout */
+    .q3-profile-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+    .q3-profile-layout-full {
+      grid-column: 1 / -1;
+    }
+    @media (max-width: 800px) {
+      .q3-profile-layout { grid-template-columns: 1fr; }
+    }
+
+    .q3-overlay-close {
+      background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 8px; color: #fff; cursor: pointer;
+      font-size: .9rem; padding: 4px 12px; transition: background .15s;
+      white-space: nowrap; flex-shrink: 0;
+    }
+    .q3-overlay-close:hover { background: rgba(255,255,255,0.28); }
+
+    .q3-overlay h2 { margin: 0 0 20px; font-size: 1.15rem; color: var(--text); }
+    .q3-overlay h3 { margin: 20px 0 10px; font-size: .85rem; font-weight:600;
+      text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); }
+
+    .q3-stat-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap: 10px;
+    }
+    .q3-stat-card {
+      background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+      border-radius: 12px; padding: 12px 14px;
+    }
+    .q3-stat-card dt { font-size: .75rem; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: .07em; margin-bottom: 4px; }
+    .q3-stat-card dd { margin:0; font-size: 1.05rem; font-weight: 600; color: var(--text); }
+
+    .q3-rank-bar {
+      background: rgba(255,255,255,0.06); border-radius: 6px; height: 8px;
+      overflow: hidden; margin-top: 6px;
+    }
+    .q3-rank-bar-fill {
+      height: 100%; background: var(--accent); border-radius: 6px;
+      transition: width .4s ease;
+    }
+
+    .q3-achievements {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap: 8px;
+    }
+    .q3-achv {
+      background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+      border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px;
+    }
+    .q3-achv-name { font-size: .8rem; color: var(--text-muted); }
+    .q3-achv-tier { font-size: .85rem; font-weight: 600; color: var(--text); }
+    .q3-achv-progress {
+      height: 4px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden;
+    }
+    .q3-achv-progress-fill {
+      height: 100%; background: var(--accent-soft);
+      border: 1px solid var(--accent-border); border-radius: 3px;
+    }
+    .q3-achv.unlocked .q3-achv-progress-fill { background: var(--accent); }
+
+    .q3-match-players { display: flex; flex-direction: column; gap: 6px; }
+    .q3-match-player {
+      display: flex; align-items: center; gap: 12px;
+      background: rgba(255,255,255,0.04); border-radius: 10px; padding: 10px 14px;
+      font-size: .88rem;
+    }
+    .q3-match-player .pos {
+      min-width: 24px; font-weight: 700; color: var(--accent); font-size: .95rem;
+    }
+    .q3-match-player .pname { flex: 1; font-weight: 600; color: var(--text); }
+    .q3-match-player .pstats { color: var(--text-muted); font-size: .82rem; }
+    .q3-loading { text-align:center; color: var(--text-muted); padding: 32px; font-size: .9rem; }
+
+    /* ── Topbar ─────────────────────────────────────────────────────────────── */
+    .q3-topbar {
+      display: flex;
+      justify-content: flex-end;
+      gap: 14px;
+      padding: 0 4px 6px;
+    }
+    .q3-topbar a {
+      font-size: .75rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      letter-spacing: .04em;
+      transition: color .15s;
+    }
+    .q3-topbar a:hover { color: var(--accent); }
+    .q3-topbar a.topbar-register::before { content: '🔑'; margin-right: 4px; opacity: .7; }
+    .q3-topbar a.topbar-admin::before    { content: '⚙️'; margin-right: 4px; opacity: .7; }
+
+    /* ── Version badge ──────────────────────────────────────────────────────── */
+    .badge-version {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 6px 2px;
+      border-radius: 4px;
+      background: transparent;
+      border: none;
+      color: rgba(var(--text-muted), 0.5);
+      color: #6b7294;
+      font-size: 0.68rem;
+      letter-spacing: 0.04em;
+      font-weight: 400;
+      cursor: pointer;
+      margin-left: 4px;
+      vertical-align: middle;
+      transition: color .15s;
+      font-family: var(--font-mono, monospace);
+      opacity: 0.55;
+    }
+    .badge-version:hover {
+      color: var(--accent);
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+<div style="padding:12px 20px"><a href="https://www.q3rally.com/" style="color:#ff5500">← Q3Rally Website</a></div>
+  <main class="page">
+    <div class="q3-topbar">
+      <a href="register.php" class="topbar-register">Register Server</a>
+      <a href="admin.php"    class="topbar-admin">Admin</a>
+    </div>
+    <section class="panel hero">
+
+      <div class="hero-top">
+        <div class="hero-brand">
+          <img src="<?= htmlspecialchars($assetPrefix . '/logo.png', ENT_QUOTES); ?>" alt="Q3Rally Logo" onerror="this.style.display='none'">
+          <div class="hero-info">
+            <h1 data-i18n-html="hero.title">Q3Rally Ladder Monitor <span class="badge-beta">beta</span></h1>
+            <button id="version-badge" class="badge-version" title="Show changelog">v<?= LADDER_VERSION ?></button>
+            <p data-i18n-html="hero.description">Direkte Vorschau der besten Platzierungen je Spielmodus und Map. Wähle oben einen Modus und vergleiche die Top 10 pro Strecke – inklusive Levelshot-Vorschau.</p>
+          </div>
+        </div>
+        <div class="hero-actions">
+          <nav class="main-nav" aria-label="Bereiche" data-i18n-aria-label="nav.label">
+            <a class="nav-link active" aria-current="page" href="<?= htmlspecialchars($apiBase, ENT_QUOTES); ?>" data-i18n="nav.matches">Matches</a>
+          </nav>
+            <div style="display:flex;align-items:center;gap:10px">
+            <button id="theme-toggle" type="button" aria-label="Toggle theme" title="Toggle dark/light mode">☀️</button>
+          <div class="language-toggle" role="group" aria-label="Sprachauswahl" data-i18n-aria-label="language.toggleLabel">
+              <button class="language-button active" type="button" data-lang="en" aria-label="Englisch" data-i18n-aria-label="language.enLabel" title="Englisch" data-i18n-title="language.enLabel"><img src="<?= htmlspecialchars($flagEn, ENT_QUOTES); ?>" alt=""></button>
+              <button class="language-button" type="button" data-lang="de" aria-label="Deutsch" data-i18n-aria-label="language.deLabel" title="Deutsch" data-i18n-title="language.deLabel"><img src="<?= htmlspecialchars($flagDe, ENT_QUOTES); ?>" alt=""></button>
+          </div>
+          </div>
+        </div>
+        <p class="empty-state" id="leaderboardEmpty" hidden data-i18n="matches.empty">Keine Bestzeiten gefunden. Lade weitere Renn-Matches oder passe die Filter an.</p>
+      </div>
+
+      <dl class="hero-stats">
+        <div class="stat"><dt data-i18n="stats.matches">Matches</dt><dd id="stat-total">–</dd></div>
+        <div class="stat"><dt data-i18n="stats.lastUpdate">Letztes Update</dt><dd id="stat-last">–</dd></div>
+        <div class="stat"><dt data-i18n="stats.modes">Spielmodi</dt><dd id="stat-modes">–</dd></div>
+        <div class="stat"><dt data-i18n="stats.players">Spieler erfasst</dt><dd id="stat-players">–</dd></div>
+      </dl>
+    </section>
+
+    <section class="panel tabbed-panel">
+      <div class="tab-header" id="modeTabs" role="tablist" aria-label="Spielmodi" data-i18n-aria-label="tabs.label"></div>
+      <p class="status" id="modeStatus"></p>
+      <div id="modePanels" class="mode-panels"></div>
+    </section>
+
+    <section class="panel">
+
+      <h2 style="margin:0; font-size:1.05rem; letter-spacing:0.02em; text-transform:uppercase; color:var(--text-muted);" data-i18n="breakdown.heading">Modus-Verteilung</h2>
+
+      <ul id="modeBreakdown"></ul>
+    </section>
+  </main>
+
+  <script>
+    const API_BASE = <?= json_encode($apiBase, JSON_UNESCAPED_SLASHES); ?>;
+
+    const MODE_CONFIG = [
+      { key: 'gt_racing', type: 'race' },
+      { key: 'gt_racing_dm', type: 'race' },
+      { key: 'gt_sprint', type: 'race' },
+      { key: 'gt_derby', type: 'derby' },
+      { key: 'gt_lcs', type: 'survival' },
+      { key: 'gt_elimination', type: 'objective' },
+      { key: 'gt_deathmatch', type: 'deathmatch' },
+      { key: 'gt_team', type: 'deathmatch' },
+      { key: 'gt_team_racing', type: 'race' },
+      { key: 'gt_team_racing_dm', type: 'race' },
+      { key: 'gt_ctf', type: 'objective' },
+      { key: 'gt_ctf4', type: 'objective' },
+      { key: 'gt_domination', type: 'objective' },
+      { key: 'gt_koth', type: 'objective' },
+      { key: 'gt_autoball', type: 'objective' }
+    ];
+
+    const LEVELSHOT_EXTENSIONS = ['webp', 'png', 'jpg', 'jpeg', 'tga'];
+    const levelshotAssetCache = new Map();
+    const levelshotMapCache = new Map();
+    let levelshotRequestCounter = 0;
+    let levelshotManifest = null;  // { mapname: 'ext', ... } loaded once from server
+
+    const I18N = {
+      de: {
+        'meta.title': 'Q3Rally Ladder Monitor beta',
+        'meta.description': 'Frontend zur Auswertung der gespeicherten Q3Rally-Ladder-Matches.',
+        'hero.title': 'Q3Rally Ladder Monitor <span class="badge-beta">beta</span>',
+        'hero.description': 'Direkte Vorschau der besten Platzierungen je Spielmodus und Map. Wähle oben einen Modus und vergleiche die Top 10 pro Strecke – inklusive Levelshot-Vorschau.',
+        'language.toggleLabel': 'Sprachauswahl',
+        'language.deLabel': 'Deutsch',
+        'language.enLabel': 'Englisch',
+        'nav.label': 'Bereiche',
+        'nav.matches': 'Matches',
+        'tabs.label': 'Spielmodi',
+        'tabs.racing': 'RACING LEADERBOARD',
+        'tabs.deathmatch': 'DEATHMATCH LEADERBOARD',
+        'tabs.elimination': 'ELIMINATION LEADERBOARD',
+        'tabs.ctf': 'CTF LEADERBOARD',
+        'tabs.matches': 'Matchübersicht',
+        'stats.matches': 'Matches',
+        'stats.lastUpdate': 'Letztes Update',
+        'stats.modes': 'Spielmodi',
+        'stats.players': 'Spieler erfasst',
+        'filters.leaderboard.mode.label': 'Spielmodus',
+        'filters.leaderboard.mode.all': 'Alle Renn-Modi',
+        'filters.leaderboard.map.label': 'Map',
+        'filters.leaderboard.map.all': 'Alle Maps',
+        'filters.leaderboard.player.label': 'Spielersuche',
+        'filters.leaderboard.player.placeholder': 'Spielername…',
+        'filters.deathmatch.mode.label': 'Spielmodus',
+        'filters.deathmatch.mode.all': 'Alle Deathmatch-Modi',
+        'filters.deathmatch.map.label': 'Map',
+        'filters.deathmatch.map.all': 'Alle Maps',
+        'filters.deathmatch.player.label': 'Spielersuche',
+        'filters.deathmatch.player.placeholder': 'Spielername…',
+        'filters.elimination.mode.label': 'Spielmodus',
+        'filters.elimination.mode.all': 'Alle Elimination-Modi',
+        'filters.elimination.map.label': 'Map',
+        'filters.elimination.map.all': 'Alle Maps',
+        'filters.elimination.player.label': 'Spielersuche',
+        'filters.elimination.player.placeholder': 'Spielername…',
+        'filters.ctf.mode.label': 'Spielmodus',
+        'filters.ctf.mode.all': 'Alle Objective-Modi',
+        'filters.ctf.map.label': 'Map',
+        'filters.ctf.map.all': 'Alle Maps',
+        'filters.ctf.player.label': 'Spielersuche',
+        'filters.ctf.player.placeholder': 'Spielername…',
+        'filters.matches.mode.label': 'Spielmodus',
+        'filters.matches.mode.all': 'Alle Modi',
+        'filters.matches.search.label': 'Suche',
+        'filters.matches.search.placeholder': 'Match-ID, Map oder Spieler…',
+        'filters.matches.limit.label': 'Lade-Limit',
+        'filters.matches.limit.all': 'Alle',
+        'filters.matches.refresh': 'Aktualisieren',
+        'matches.empty': 'Keine Bestzeiten gefunden. Lade weitere Renn-Matches oder passe die Filter an.',
+        'leaderboard.headers.rank': 'Rang',
+        'leaderboard.headers.player': 'Spieler',
+        'leaderboard.headers.time': 'Zeit',
+        'leaderboard.headers.best': 'Bestzeit',
+        'leaderboard.headers.map': 'Map',
+        'leaderboard.headers.mode': 'Modus',
+        'leaderboard.headers.vehicle': 'Fahrzeug',
+        'leaderboard.headers.recorded': 'Aufgestellt am',
+        'leaderboard.player.botTag': 'Bot',
+        'leaderboard.player.botTooltip': 'Bestzeit von einem Bot erzielt',
+        'deathmatch.headers.rank': 'Rang',
+        'deathmatch.headers.player': 'Spieler',
+        'deathmatch.headers.kdr': 'K/D',
+        'deathmatch.headers.kills': 'Kills',
+        'deathmatch.headers.deaths': 'Tode',
+        'deathmatch.headers.map': 'Map',
+        'deathmatch.headers.mode': 'Modus',
+        'deathmatch.headers.recorded': 'Aufgestellt am',
+        'leaderboard.status.waiting': 'Warte auf Daten…',
+        'leaderboard.status.loading': 'Lade Bestzeiten…',
+        'leaderboard.status.noneData': 'Keine Renn-Daten in den geladenen Matches gefunden.',
+        'leaderboard.status.noFilterMatches': 'Keine Ergebnisse für die aktuellen Filter.',
+        'leaderboard.status.count': '{displayed} von {total} Bestzeiten angezeigt.',
+        'leaderboard.status.error': 'Fehler beim Laden: {message}',
+        'leaderboard.empty.noData': 'Keine Bestzeiten gefunden. Lade weitere Renn-Matches oder passe die Filter an.',
+        'leaderboard.empty.noFilterMatches': 'Keine Ergebnisse passend zu den aktuellen Filtern.',
+        'leaderboard.matchId.title': 'Match-ID',
+        'leaderboard.meta.recorded': 'Aufgestellt am',
+        'deathmatch.status.waiting': 'Warte auf Daten…',
+        'deathmatch.status.loading': 'Lade K/D-Werte…',
+        'deathmatch.status.noneData': 'Keine Deathmatch-Daten in den geladenen Matches gefunden.',
+        'deathmatch.status.noFilterMatches': 'Keine Ergebnisse für die aktuellen Filter.',
+        'deathmatch.status.count': '{displayed} von {total} K/D-Werten angezeigt.',
+        'deathmatch.status.error': 'Fehler beim Laden: {message}',
+        'deathmatch.empty.noData': 'Keine K/D-Werte gefunden. Lade weitere Deathmatch-Matches oder passe die Filter an.',
+        'deathmatch.empty.noFilterMatches': 'Keine Ergebnisse passend zu den aktuellen Filtern.',
+        'deathmatch.matchId.title': 'Match-ID',
+        'deathmatch.meta.recorded': 'Aufgestellt am',
+        'elimination.headers.rank': 'Rang',
+        'elimination.headers.player': 'Spieler',
+        'elimination.headers.value': 'Wertung',
+        'elimination.headers.map': 'Map',
+        'elimination.headers.mode': 'Modus',
+        'elimination.headers.recorded': 'Aufgestellt am',
+        'elimination.status.waiting': 'Warte auf Daten…',
+        'elimination.status.loading': 'Lade Elimination-Werte…',
+        'elimination.status.noneData': 'Keine Elimination-Daten in den geladenen Matches gefunden.',
+        'elimination.status.noFilterMatches': 'Keine Ergebnisse für die aktuellen Filter.',
+        'elimination.status.count': '{displayed} von {total} Elimination-Werten angezeigt.',
+        'elimination.status.error': 'Fehler beim Laden: {message}',
+        'elimination.empty.noData': 'Keine Elimination-Werte gefunden. Lade weitere Elimination-Matches oder passe die Filter an.',
+        'elimination.empty.noFilterMatches': 'Keine Ergebnisse passend zu den aktuellen Filtern.',
+        'elimination.matchId.title': 'Match-ID',
+        'ctf.headers.rank': 'Rang',
+        'ctf.headers.player': 'Spieler',
+        'ctf.headers.value': 'Zielwertung',
+        'ctf.headers.map': 'Map',
+        'ctf.headers.mode': 'Modus',
+        'ctf.headers.recorded': 'Aufgestellt am',
+        'ctf.status.waiting': 'Warte auf Daten…',
+        'ctf.status.loading': 'Lade Objective-Werte…',
+        'ctf.status.noneData': 'Keine Objective-Daten in den geladenen Matches gefunden.',
+        'ctf.status.noFilterMatches': 'Keine Ergebnisse für die aktuellen Filter.',
+        'ctf.status.count': '{displayed} von {total} Objective-Werten angezeigt.',
+        'ctf.status.error': 'Fehler beim Laden: {message}',
+        'ctf.empty.noData': 'Keine Objective-Werte gefunden. Lade weitere CTF/Objective-Matches oder passe die Filter an.',
+        'ctf.empty.noFilterMatches': 'Keine Ergebnisse passend zu den aktuellen Filtern.',
+        'ctf.matchId.title': 'Match-ID',
+        'ctf.meta.recorded': 'Aufgestellt am',
+        'ctf.metric.captures': 'Flag-Eroberungen',
+        'ctf.metric.score': 'Punkte',
+        'ctf.metric.wins': 'Runden gewonnen',
+        'ctf.metric.objectives': 'Ziele',
+        'ctf.metric.value': 'Wertung',
+        'status.loadingMatches': 'Lade Matches…',
+        'status.noMatches': 'Keine Matches gespeichert.',
+        'status.lastUpdated': 'Letzte Aktualisierung: {timestamp}',
+        'status.error': 'Fehler beim Laden: {message}',
+        'matches.empty': 'Keine Matches gefunden. Passe die Filter an oder lade neue Daten.',
+        'matches.summary.mapLabel': 'Map',
+        'matches.summary.idLabel': 'ID',
+        'matches.summary.startLabel': 'Start',
+        'matches.summary.durationLabel': 'Dauer',
+        'matches.summary.playersTitle': 'Spielerzahl',
+        'matches.meta.server': 'Server',
+        'matches.meta.version': 'Version',
+        'matches.meta.recorded': 'Aufgenommen',
+        'matches.meta.size': 'Dateigröße',
+        'matches.players.heading': 'Spieler ({count})',
+        'matches.players.empty': 'Keine Spielerinformationen vorhanden.',
+        'matches.status.error': 'Fehler beim Laden: {message}',
+        'errors.unexpectedResponse': 'Unerwartete Antwort des Servers.',
+        'breakdown.heading': 'Modus-Verteilung',
+        'breakdown.empty': 'Keine Daten vorhanden.',
+        'noscript.message': 'Bitte JavaScript aktivieren, um die gespeicherten Matches anzeigen zu können.',
+        'mode.unknown': 'Unbekannt',
+        'mode.controls.map': 'Map',
+        'mode.table.heading': 'Top 10 Platzierungen',
+        'mode.empty': 'Keine Einträge für diese Map.',
+        'mode.status.loading': 'Lade Matches…',
+        'mode.status.ready': 'Top-Ergebnisse aus {count} Matches geladen.',
+        'mode.status.empty': 'Keine Matches gespeichert.',
+        'mode.status.error': 'Fehler beim Laden: {message}',
+        'mode.headers.metric': 'Metrik',
+        'mode.levelshot.missing': 'Kein Levelshot verfügbar.',
+        'map.unknown': 'Unbekannte Map',
+        'common.unknown': 'Unbekannt',
+        'ghosts.tab': 'Ghosts',
+        'ghosts.controls.map': 'Map',
+        'ghosts.controls.variant': 'Streckenvariante',
+        'ghosts.controls.vehicle': 'Fahrzeug',
+        'ghosts.controls.allVehicles': 'Alle Fahrzeuge',
+        'ghosts.controls.build': 'Map-Version',
+        'ghosts.build.current': 'Aktuell (Physik {physics})',
+        'ghosts.build.older': 'Älter (Physik {physics}, bis {date})',
+        'ghosts.length.short': 'Kurz',
+        'ghosts.length.medium': 'Mittel',
+        'ghosts.length.long': 'Lang',
+        'ghosts.reversed': 'rückwärts',
+        'ghosts.table.heading': 'Schnellste Runden-Ghosts',
+        'ghosts.headers.vehicle': 'Fahrzeug',
+        'ghosts.headers.lap': 'Runde',
+        'ghosts.headers.gap': 'Abstand',
+        'ghosts.headers.recorded': 'Gefahren am',
+        'ghosts.headers.source': 'Quelle',
+        'ghosts.headers.download': 'Ghost',
+        'ghosts.source.online': 'Online',
+        'ghosts.source.offline': 'Offline',
+        'ghosts.download.title': 'Ghost-Datei herunterladen',
+        'ghosts.status.loading': 'Lade Ghosts…',
+        'ghosts.status.empty': 'Für diese Auswahl gibt es noch keine Ghosts.',
+        'ghosts.status.error': 'Fehler beim Laden: {message}',
+        'ghosts.note': 'Je Spieler zählt der beste Ghost pro Strecke, Variante und Fahrzeug. Ghosts lassen sich in Q3Rally im Spielmodus Ghost Race als Gegner auswählen.'
+      },
+      en: {
+        'meta.title': 'Q3Rally Ladder Monitor beta',
+        'meta.description': 'Frontend for exploring the stored Q3Rally ladder matches.',
+        'hero.title': 'Q3Rally Ladder Monitor <span class="badge-beta">beta</span>',
+        'hero.description': 'Live preview of the best placements per game mode and map. Pick a mode above and compare the top 10 per track – complete with levelshot previews.',
+        'language.toggleLabel': 'Language selection',
+        'language.deLabel': 'German',
+        'language.enLabel': 'English',
+        'nav.label': 'Sections',
+        'nav.matches': 'Matches',
+        'tabs.label': 'Game modes',
+        'tabs.racing': 'RACING LEADERBOARD',
+        'tabs.deathmatch': 'DEATHMATCH LEADERBOARD',
+        'tabs.elimination': 'ELIMINATION LEADERBOARD',
+        'tabs.ctf': 'CTF LEADERBOARD',
+        'tabs.matches': 'Match overview',
+        'stats.matches': 'Matches',
+        'stats.lastUpdate': 'Last update',
+        'stats.modes': 'Game modes',
+        'stats.players': 'Players tracked',
+        'filters.leaderboard.mode.label': 'Game mode',
+        'filters.leaderboard.mode.all': 'All racing modes',
+        'filters.leaderboard.map.label': 'Map',
+        'filters.leaderboard.map.all': 'All maps',
+        'filters.leaderboard.player.label': 'Player search',
+        'filters.leaderboard.player.placeholder': 'Player name…',
+        'filters.deathmatch.mode.label': 'Game mode',
+        'filters.deathmatch.mode.all': 'All deathmatch modes',
+        'filters.deathmatch.map.label': 'Map',
+        'filters.deathmatch.map.all': 'All maps',
+        'filters.deathmatch.player.label': 'Player search',
+        'filters.deathmatch.player.placeholder': 'Player name…',
+        'filters.elimination.mode.label': 'Game mode',
+        'filters.elimination.mode.all': 'All elimination modes',
+        'filters.elimination.map.label': 'Map',
+        'filters.elimination.map.all': 'All maps',
+        'filters.elimination.player.label': 'Player search',
+        'filters.elimination.player.placeholder': 'Player name…',
+        'filters.ctf.mode.label': 'Game mode',
+        'filters.ctf.mode.all': 'All objective modes',
+        'filters.ctf.map.label': 'Map',
+        'filters.ctf.map.all': 'All maps',
+        'filters.ctf.player.label': 'Player search',
+        'filters.ctf.player.placeholder': 'Player name…',
+        'filters.matches.mode.label': 'Game mode',
+        'filters.matches.mode.all': 'All modes',
+        'filters.matches.search.label': 'Search',
+        'filters.matches.search.placeholder': 'Match ID, map, or player…',
+        'filters.matches.limit.label': 'Load limit',
+        'filters.matches.limit.all': 'All',
+        'filters.matches.refresh': 'Refresh',
+        'matches.empty': 'No best times found. Load more racing matches or adjust the filters.',
+        'leaderboard.headers.rank': 'Rank',
+        'leaderboard.headers.player': 'Player',
+        'leaderboard.headers.time': 'Time',
+        'leaderboard.headers.best': 'Best time',
+        'leaderboard.headers.map': 'Map',
+        'leaderboard.headers.mode': 'Mode',
+        'leaderboard.headers.vehicle': 'Vehicle',
+        'leaderboard.headers.recorded': 'Set on',
+        'leaderboard.player.botTag': 'Bot',
+        'leaderboard.player.botTooltip': 'Record set by a bot',
+        'deathmatch.headers.rank': 'Rank',
+        'deathmatch.headers.player': 'Player',
+        'deathmatch.headers.kdr': 'K/D ratio',
+        'deathmatch.headers.kills': 'Kills',
+        'deathmatch.headers.deaths': 'Deaths',
+        'deathmatch.headers.map': 'Map',
+        'deathmatch.headers.mode': 'Mode',
+        'deathmatch.headers.recorded': 'Set on',
+        'leaderboard.status.waiting': 'Waiting for data…',
+        'leaderboard.status.loading': 'Loading best times…',
+        'leaderboard.status.noneData': 'No racing data found in the loaded matches.',
+        'leaderboard.status.noFilterMatches': 'No results for the current filters.',
+        'leaderboard.status.count': 'Showing {displayed} of {total} best times.',
+        'leaderboard.status.error': 'Load error: {message}',
+        'leaderboard.empty.noData': 'No best times found. Upload more racing matches or adjust the filters.',
+        'leaderboard.empty.noFilterMatches': 'No results match the current filters.',
+        'leaderboard.matchId.title': 'Match ID',
+        'leaderboard.meta.recorded': 'Recorded on',
+        'deathmatch.status.waiting': 'Waiting for data…',
+        'deathmatch.status.loading': 'Loading K/D records…',
+        'deathmatch.status.noneData': 'No deathmatch data found in the loaded matches.',
+        'deathmatch.status.noFilterMatches': 'No results for the current filters.',
+        'deathmatch.status.count': 'Showing {displayed} of {total} K/D records.',
+        'deathmatch.status.error': 'Load error: {message}',
+        'deathmatch.empty.noData': 'No K/D records found. Upload more deathmatch matches or adjust the filters.',
+        'deathmatch.empty.noFilterMatches': 'No results match the current filters.',
+        'deathmatch.matchId.title': 'Match ID',
+        'deathmatch.meta.recorded': 'Recorded on',
+        'elimination.headers.rank': 'Rank',
+        'elimination.headers.player': 'Player',
+        'elimination.headers.value': 'Score',
+        'elimination.headers.map': 'Map',
+        'elimination.headers.mode': 'Mode',
+        'elimination.headers.recorded': 'Recorded on',
+        'elimination.status.waiting': 'Waiting for data…',
+        'elimination.status.loading': 'Loading elimination stats…',
+        'elimination.status.noneData': 'No elimination stats found in the loaded matches.',
+        'elimination.status.noFilterMatches': 'No results for the current filters.',
+        'elimination.status.count': 'Showing {displayed} of {total} elimination records.',
+        'elimination.status.error': 'Load error: {message}',
+        'elimination.empty.noData': 'No elimination stats found. Upload more elimination matches or adjust the filters.',
+        'elimination.empty.noFilterMatches': 'No results match the current filters.',
+        'elimination.matchId.title': 'Match ID',
+        'ctf.headers.rank': 'Rank',
+        'ctf.headers.player': 'Player',
+        'ctf.headers.value': 'Objective value',
+        'ctf.headers.map': 'Map',
+        'ctf.headers.mode': 'Mode',
+        'ctf.headers.recorded': 'Recorded on',
+        'ctf.status.waiting': 'Waiting for data…',
+        'ctf.status.loading': 'Loading objective values…',
+        'ctf.status.noneData': 'No objective data found in the loaded matches.',
+        'ctf.status.noFilterMatches': 'No results for the current filters.',
+        'ctf.status.count': 'Showing {displayed} of {total} objective values.',
+        'ctf.status.error': 'Load error: {message}',
+        'ctf.empty.noData': 'No objective values found. Upload more CTF/objective matches or adjust the filters.',
+        'ctf.empty.noFilterMatches': 'No results match the current filters.',
+        'ctf.matchId.title': 'Match ID',
+        'ctf.meta.recorded': 'Recorded on',
+        'ctf.metric.captures': 'Flag captures',
+        'ctf.metric.score': 'Points',
+        'ctf.metric.wins': 'Rounds won',
+        'ctf.metric.objectives': 'Objectives',
+        'ctf.metric.value': 'Value',
+        'status.loadingMatches': 'Loading matches…',
+        'status.noMatches': 'No matches stored.',
+        'status.lastUpdated': 'Last refreshed: {timestamp}',
+        'status.error': 'Load error: {message}',
+        'matches.empty': 'No matches found. Adjust the filters or upload new data.',
+        'matches.summary.mapLabel': 'Map',
+        'matches.summary.idLabel': 'ID',
+        'matches.summary.startLabel': 'Start',
+        'matches.summary.durationLabel': 'Duration',
+        'matches.summary.playersTitle': 'Player count',
+        'matches.meta.server': 'Server',
+        'matches.meta.version': 'Version',
+        'matches.meta.recorded': 'Recorded',
+        'matches.meta.size': 'File size',
+        'matches.players.heading': 'Players ({count})',
+        'matches.players.empty': 'No player information available.',
+        'matches.status.error': 'Load error: {message}',
+        'errors.unexpectedResponse': 'Unexpected server response.',
+        'breakdown.heading': 'Mode distribution',
+        'breakdown.empty': 'No data available.',
+        'noscript.message': 'Please enable JavaScript to display the stored matches.',
+        'mode.unknown': 'Unknown',
+        'mode.controls.map': 'Map',
+        'mode.table.heading': 'Top 10 placements',
+        'mode.empty': 'No entries for this map.',
+        'mode.status.loading': 'Loading matches…',
+        'mode.status.ready': 'Loaded top entries from {count} matches.',
+        'mode.status.empty': 'No matches stored.',
+        'mode.status.error': 'Load error: {message}',
+        'mode.headers.metric': 'Metric',
+        'mode.levelshot.missing': 'No levelshot available.',
+        'map.unknown': 'Unknown map',
+        'common.unknown': 'Unknown',
+        'ghosts.tab': 'Ghosts',
+        'ghosts.controls.map': 'Map',
+        'ghosts.controls.variant': 'Track variant',
+        'ghosts.controls.vehicle': 'Vehicle',
+        'ghosts.controls.allVehicles': 'All vehicles',
+        'ghosts.controls.build': 'Map version',
+        'ghosts.build.current': 'Current (physics {physics})',
+        'ghosts.build.older': 'Older (physics {physics}, until {date})',
+        'ghosts.length.short': 'Short',
+        'ghosts.length.medium': 'Medium',
+        'ghosts.length.long': 'Long',
+        'ghosts.reversed': 'reversed',
+        'ghosts.table.heading': 'Fastest lap ghosts',
+        'ghosts.headers.vehicle': 'Vehicle',
+        'ghosts.headers.lap': 'Lap',
+        'ghosts.headers.gap': 'Gap',
+        'ghosts.headers.recorded': 'Driven on',
+        'ghosts.headers.source': 'Source',
+        'ghosts.headers.download': 'Ghost',
+        'ghosts.source.online': 'Online',
+        'ghosts.source.offline': 'Offline',
+        'ghosts.download.title': 'Download ghost file',
+        'ghosts.status.loading': 'Loading ghosts…',
+        'ghosts.status.empty': 'No ghosts for this selection yet.',
+        'ghosts.status.error': 'Failed to load: {message}',
+        'ghosts.note': 'Each player counts with their best ghost per track, variant and vehicle. In Q3Rally you can race these ghosts in the Ghost Race game mode.'
+      }
+    };
+
+    const MODE_TRANSLATIONS = {
+      de: {
+        gt_racing: 'Rennen',
+        gt_racing_dm: 'Deathmatch Rennen',
+        gt_sprint: 'Sprint',
+        gt_derby: 'Demolition Derby',
+        gt_lcs: 'Last Car Standing',
+        gt_elimination: 'Elimination',
+        gt_deathmatch: 'Deathmatch',
+        gt_team: 'Team Deathmatch',
+        gt_team_racing: 'Team Racing',
+        gt_team_racing_dm: 'Team Racing Deathmatch',
+        gt_ctf: 'Capture the Flag',
+        gt_ctf4: '4-Teams-CTF',
+        gt_domination: 'Domination',
+        gt_koth: 'King of the Hill',
+        gt_autoball: 'Autoball'
+      },
+      en: {
+        gt_racing: 'Racing',
+        gt_racing_dm: 'Racing Deathmatch',
+        gt_sprint: 'Sprint',
+        gt_derby: 'Demolition Derby',
+        gt_lcs: 'Last Car Standing',
+        gt_elimination: 'Elimination',
+        gt_deathmatch: 'Deathmatch',
+        gt_team: 'Team Deathmatch',
+        gt_team_racing: 'Team Racing',
+        gt_team_racing_dm: 'Team Racing Deathmatch',
+        gt_ctf: 'Capture the Flag',
+        gt_ctf4: '4-Team CTF',
+        gt_domination: 'Domination',
+        gt_koth: 'King of the Hill',
+        gt_autoball: 'Autoball'
+      }
+    };
+
+    const RACE_MODE_KEYS = new Set(['gt_racing', 'gt_racing_dm', 'gt_sprint', 'gt_team_racing', 'gt_team_racing_dm']);
+    const DEATHMATCH_MODE_KEYS = new Set(['gt_deathmatch', 'gt_team']);
+    const DERBY_MODE_KEYS = new Set(['gt_derby']);
+    const SURVIVAL_MODE_KEYS = new Set(['gt_lcs']);
+    const OBJECTIVE_MODE_KEYS = new Set(['gt_ctf', 'gt_ctf4', 'gt_elimination', 'gt_domination', 'gt_koth', 'gt_autoball']);
+
+    const OBJECTIVE_METRIC_DEFINITIONS = {
+      captures: {
+        paths: [
+          'captures',
+          'flagCaptures',
+          'flags',
+          'stats.captures',
+          'stats.flags',
+          'result.captures',
+          'result.flags',
+          'summary.captures',
+          'totals.captures'
+        ],
+        keywords: ['capture', 'flag']
+      },
+      score: {
+        paths: [
+          'score',
+          'points',
+          'value',
+          'stats.score',
+          'stats.points',
+          'result.score',
+          'summary.score',
+          'summary.points',
+          'totals.score',
+          'totals.points'
+        ],
+        keywords: ['score', 'point']
+      },
+      objectives: {
+        paths: [
+          'objectives',
+          'objectiveScore',
+          'objectivePoints',
+          'stats.objectives',
+          'stats.objectiveScore',
+          'result.objectives',
+          'summary.objectives',
+          'totals.objectives'
+        ],
+        keywords: ['objective', 'domination']
+      },
+      wins: {
+        paths: [
+          'wins',
+          'roundsWon',
+          'roundWins',
+          'round_wins',
+          'rounds_won',
+          'rounds',
+          'victories',
+          'stats.wins',
+          'stats.roundsWon',
+          'stats.round_wins',
+          'stats.rounds_won',
+          'result.wins',
+          'result.round_wins',
+          'result.rounds_won',
+          'summary.wins',
+          'summary.round_wins',
+          'summary.rounds_won',
+          'totals.wins'
+        ],
+        keywords: ['win', 'round', 'elimination']
+      }
+    };
+
+    const OBJECTIVE_MODE_PRIORITY = {
+      gt_ctf: ['captures', 'score', 'objectives', 'wins'],
+      gt_ctf4: ['captures', 'score', 'objectives', 'wins'],
+      gt_elimination: ['wins', 'score', 'captures', 'objectives'],
+      gt_domination: ['objectives', 'score', 'captures', 'wins'],
+      gt_koth: ['objectives', 'score', 'captures', 'wins'],
+      gt_autoball: ['score', 'wins', 'objectives', 'captures'],
+      gt_lcs: ['wins', 'score', 'captures', 'objectives']
+    };
+
+    const OBJECTIVE_DEFAULT_PRIORITY = ['score', 'captures', 'objectives', 'wins'];
+
+    const OBJECTIVE_METRIC_LABEL_KEYS = {
+      captures: 'ctf.metric.captures',
+      score: 'ctf.metric.score',
+      objectives: 'ctf.metric.objectives',
+      wins: 'ctf.metric.wins',
+      value: 'ctf.metric.value'
+    };
+
+    function createEmptyAggregation() {
+      return {
+        totalMatches: 0,
+        lastDate: null,
+        modeCounts: new Map(),
+        playerNames: new Set(),
+        raceBest: new Map(),
+        deathmatchBest: new Map(),
+        derbyBest: new Map(),
+        survivalBest: new Map(),
+        objectiveBest: new Map(),
+        eliminationBest: new Map()
+      };
+    }
+
+
+const state = {
+  aggregation: createEmptyAggregation(),
+  aggregationOnline: createEmptyAggregation(),
+  aggregationOffline: createEmptyAggregation(),
+  leaderboard: [],
+  deathmatchLeaderboard: [],
+  derbyLeaderboard: [],
+  survivalLeaderboard: [],
+  objectiveLeaderboard: [],
+  eliminationLeaderboard: [],
+  modeData: new Map(),
+  selectedMaps: new Map(),
+  mapMetadata: new Map(),
+  activeMode: MODE_CONFIG.length ? MODE_CONFIG[0].key : 'gt_racing',
+  activeSource: 'online',
+  language: 'en',
+  modeStatus: { key: null, params: {}, isError: false }
+};
+
+const elements = {
+  modeTabs: document.getElementById('modeTabs'),
+  modePanels: document.getElementById('modePanels'),
+  modeStatus: document.getElementById('modeStatus'),
+  statTotal: document.getElementById('stat-total'),
+  statLast: document.getElementById('stat-last'),
+  statModes: document.getElementById('stat-modes'),
+  statPlayers: document.getElementById('stat-players'),
+  modeBreakdown: document.getElementById('modeBreakdown'),
+  languageButtons: Array.from(document.querySelectorAll('.language-button')),
+  html: document.documentElement,
+  metaDescription: document.querySelector('meta[name="description"]')
+};
+
+const modeElements = new Map();
+const MODE_CONFIG_MAP = new Map(MODE_CONFIG.map((config) => [config.key, config]));
+
+const TIME_PATH_CANDIDATES = [
+  'bestLap',
+  'bestLapTime',
+  'bestLapMs',
+  'bestLapMilliseconds',
+  'fastestLap',
+  'fastestLapTime',
+  'fastestLapMs',
+  'fastestLapMilliseconds',
+  'fastestTime',
+  'bestTime',
+  'raceTime',
+  'totalTime',
+  'total_time',
+  'lapTime',
+  'lap_time',
+  'duration',
+  'durationSeconds',
+  'duration_seconds',
+  'stats.bestLap',
+  'stats.bestLapTime',
+  'stats.fastestLap',
+  'stats.fastestTime',
+  'stats.raceTime',
+  'result.bestLap',
+  'result.bestLapTime',
+  'result.fastestLap',
+  'result.fastestTime',
+  'timing.bestLap',
+  'timing.bestTime',
+  'timing.totalTime',
+  'timings.bestLap',
+  'timings.bestTime'
+];
+
+const PLAYER_PATH_CANDIDATES = [
+  'name',
+  'nick',
+  'nickname',
+  'player',
+  'playerName',
+  'driver',
+  'driverName',
+  'racer',
+  'pilot',
+  'id',
+  'uid',
+  'guid',
+  'stats.name',
+  'stats.player',
+  'result.name',
+  'result.player'
+];
+
+const VEHICLE_PATH_CANDIDATES = [
+  'vehicle',
+  'car',
+  'bike',
+  'kart',
+  'ride',
+  'stats.vehicle',
+  'result.vehicle'
+];
+
+const BOT_PATH_CANDIDATES = [
+  'isBot',
+  'is_bot',
+  'bot',
+  'botPlayer',
+  'isAI',
+  'isAi',
+  'ai',
+  'stats.isBot',
+  'stats.is_bot',
+  'stats.bot',
+  'result.isBot',
+  'result.is_bot',
+  'result.bot'
+];
+
+const SCOREBOARD_PATHS = [
+  'leaderboard',
+  'leaderboard.entries',
+  'results',
+  'results.entries',
+  'scoreboard',
+  'scores',
+  'stats.results',
+  'match.scoreboard',
+  'match.results',
+  'timing.results',
+  'timing.leaderboard',
+  'timings',
+  'players'
+];
+
+const ELIMINATION_POSITION_PATHS = [
+  'position',
+  'place',
+  'rank',
+  'standing',
+  'finishPosition',
+  'finishRank',
+  'finish.position',
+  'finish.place',
+  'finish.rank',
+  'finalPosition',
+  'finalRank',
+  'stats.position',
+  'stats.place',
+  'stats.rank',
+  'result.position',
+  'result.place',
+  'result.rank',
+  'summary.position',
+  'summary.place',
+  'totals.position',
+  'totals.place'
+];
+
+const ELIMINATION_REMAINING_PATHS = [
+  'remainingPlayers',
+  'playersRemaining',
+  'playersLeft',
+  'playersAlive',
+  'alivePlayers',
+  'stillAlive',
+  'stats.remainingPlayers',
+  'stats.playersRemaining',
+  'result.remainingPlayers',
+  'result.playersRemaining',
+  'summary.remainingPlayers',
+  'summary.playersRemaining',
+  'totals.remainingPlayers',
+  'totals.playersRemaining'
+];
+
+const ELIMINATION_ROSTER_PATHS = [
+  'rosterSize',
+  'roster',
+  'playerCount',
+  'totalPlayers',
+  'participants',
+  'stats.rosterSize',
+  'stats.playerCount',
+  'stats.totalPlayers',
+  'result.rosterSize',
+  'result.playerCount',
+  'result.totalPlayers',
+  'summary.rosterSize',
+  'summary.playerCount',
+  'summary.totalPlayers',
+  'totals.rosterSize',
+  'totals.playerCount',
+  'totals.totalPlayers'
+];
+
+const MAX_REASONABLE_TIME = 6 * 3600;
+
+const KILL_PATH_CANDIDATES = [
+  'kills',
+  'frags',
+  'stats.kills',
+  'stats.frags',
+  'result.kills',
+  'result.frags',
+  'summary.kills',
+  'summary.frags',
+  'totals.kills',
+  'totals.frags'
+];
+
+const DEATH_PATH_CANDIDATES = [
+  'deaths',
+  'death',
+  'stats.deaths',
+  'stats.death',
+  'result.deaths',
+  'summary.deaths',
+  'totals.deaths'
+];
+
+function getLocale(lang = state.language) {
+  return lang === 'de' ? 'de-DE' : 'en-US';
+}
+
+function createFormatter(lang = state.language) {
+  return new Intl.DateTimeFormat(getLocale(lang), {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  });
+}
+
+let formatter = createFormatter();
+
+function translateWithFallback(key, lang = state.language) {
+  const primary = I18N[lang] || {};
+  if (Object.prototype.hasOwnProperty.call(primary, key)) {
+    return primary[key];
+  }
+  if (lang !== 'en' && I18N.en && Object.prototype.hasOwnProperty.call(I18N.en, key)) {
+    return I18N.en[key];
+  }
+  if (lang !== 'de' && I18N.de && Object.prototype.hasOwnProperty.call(I18N.de, key)) {
+    return I18N.de[key];
+  }
+  return key;
+}
+
+function t(key, params = {}) {
+  const template = translateWithFallback(key);
+  if (typeof template !== 'string') {
+    return key;
+  }
+  return template.replace(/\{(\w+)\}/g, (match, token) => {
+    if (Object.prototype.hasOwnProperty.call(params, token)) {
+      return String(params[token]);
+    }
+    return match;
+  });
+}
+
+function applyStaticTranslations() {
+  document.querySelectorAll('[data-i18n]').forEach((element) => {
+    const key = element.dataset.i18n;
+    if (key) {
+      element.textContent = t(key);
+    }
+  });
+  document.querySelectorAll('[data-i18n-html]').forEach((element) => {
+    const key = element.dataset.i18nHtml;
+    if (key) {
+      element.innerHTML = t(key);
+    }
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach((element) => {
+    const key = element.dataset.i18nPlaceholder;
+    if (key) {
+      element.setAttribute('placeholder', t(key));
+    }
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach((element) => {
+    const key = element.dataset.i18nTitle;
+    if (key) {
+      element.setAttribute('title', t(key));
+    }
+  });
+  document.querySelectorAll('[data-i18n-aria-label]').forEach((element) => {
+    const key = element.dataset.i18nAriaLabel;
+    if (key) {
+      element.setAttribute('aria-label', t(key));
+    }
+  });
+}
+
+function updateLanguageButtons() {
+  elements.languageButtons.forEach((button) => {
+    const isActive = button.dataset.lang === state.language;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-pressed', String(isActive));
+  });
+}
+
+function setModeStatus(key, params = {}, isError = false, persist = true) {
+  const message = t(key, params);
+  elements.modeStatus.textContent = message;
+  elements.modeStatus.classList.toggle('error', Boolean(isError));
+  if (persist) {
+    state.modeStatus = { key, params, isError };
+  }
+}
+
+function applyLanguage(lang) {
+  if (!I18N[lang]) {
+    lang = 'de';
+  }
+  state.language = lang;
+  elements.html.lang = lang === 'de' ? 'de' : 'en';
+  formatter = createFormatter(lang);
+  document.title = t('meta.title');
+  if (elements.metaDescription) {
+    elements.metaDescription.setAttribute('content', t('meta.description'));
+  }
+  applyStaticTranslations();
+  updateLanguageButtons();
+  updateModeTabsLanguage();
+  buildRaceLeaderboard();
+  buildDeathmatchLeaderboard();
+  buildDerbyLeaderboard();
+  buildSurvivalLeaderboard();
+  buildObjectiveLeaderboard();
+  prepareModeData();
+  updateSummary();
+  updateModeOptions();
+  MODE_CONFIG.forEach(({ key }) => {
+    renderModeTable(key);
+  });
+  if (state.activeMode === GHOST_TAB_KEY) {
+    renderGhostPanel();
+  }
+  if (state.modeStatus.key) {
+    setModeStatus(state.modeStatus.key, state.modeStatus.params, state.modeStatus.isError, false);
+  }
+}
+
+function createModeTabs() {
+  const tabFragment = document.createDocumentFragment();
+  const panelFragment = document.createDocumentFragment();
+  MODE_CONFIG.forEach((config, index) => {
+    const button = document.createElement('button');
+    button.className = 'tab-button';
+    button.type = 'button';
+    button.dataset.mode = config.key;
+    button.id = `mode-tab-${config.key}`;
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-controls', `mode-panel-${config.key}`);
+    button.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
+    button.setAttribute('tabindex', index === 0 ? '0' : '-1');
+    button.addEventListener('click', () => {
+      setActiveMode(config.key);
+    });
+    tabFragment.appendChild(button);
+
+    const panel = document.createElement('div');
+    panel.className = 'mode-panel tab-panel';
+    if (index === 0) {
+      panel.classList.add('active');
+    }
+    panel.id = `mode-panel-${config.key}`;
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', button.id);
+
+    const controls = document.createElement('div');
+    controls.className = 'mode-controls';
+    const mapWrapper = document.createElement('div');
+    const mapLabel = document.createElement('label');
+    mapLabel.setAttribute('for', `mode-map-${config.key}`);
+    mapLabel.dataset.i18n = 'mode.controls.map';
+    mapWrapper.appendChild(mapLabel);
+    const mapSelect = document.createElement('select');
+    mapSelect.id = `mode-map-${config.key}`;
+    mapSelect.disabled = true;
+    mapSelect.addEventListener('change', () => {
+      state.selectedMaps.set(config.key, mapSelect.value);
+      renderModeTable(config.key);
+    });
+    mapWrapper.appendChild(mapSelect);
+    controls.appendChild(mapWrapper);
+    panel.appendChild(controls);
+
+    const layout = document.createElement('div');
+    layout.className = 'mode-layout';
+
+    const figure = document.createElement('figure');
+    figure.className = 'mode-levelshot';
+    const shot = document.createElement('img');
+    shot.alt = '';
+    shot.loading = 'lazy';
+    shot.decoding = 'async';
+    const fallback = document.createElement('p');
+    fallback.className = 'mode-levelshot-fallback';
+    fallback.dataset.i18n = 'mode.levelshot.missing';
+    fallback.hidden = true;
+    shot.addEventListener('error', () => {
+      shot.hidden = true;
+      fallback.hidden = false;
+    });
+    shot.addEventListener('load', () => {
+      shot.hidden = false;
+      fallback.hidden = true;
+    });
+    const caption = document.createElement('figcaption');
+    figure.appendChild(shot);
+    figure.appendChild(fallback);
+    figure.appendChild(caption);
+    layout.appendChild(figure);
+
+    const tableWrapper = document.createElement('div');
+    tableWrapper.className = 'mode-table-wrapper';
+    const heading = document.createElement('h3');
+    heading.dataset.i18n = 'mode.table.heading';
+    tableWrapper.appendChild(heading);
+    const tableContainer = document.createElement('div');
+    tableContainer.className = 'table-wrapper';
+    const table = document.createElement('table');
+    table.className = 'leaderboard-table';
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    table.appendChild(tbody);
+    tableContainer.appendChild(table);
+    tableWrapper.appendChild(tableContainer);
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.dataset.i18n = 'mode.empty';
+    empty.hidden = true;
+    tableWrapper.appendChild(empty);
+    layout.appendChild(tableWrapper);
+
+    panel.appendChild(layout);
+    panelFragment.appendChild(panel);
+
+    modeElements.set(config.key, {
+      button,
+      panel,
+      mapSelect,
+      table,
+      tableHeadRow: headerRow,
+      tableBody: tbody,
+      tableContainer,
+      empty,
+      levelshot: shot,
+      levelshotFallback: fallback,
+      levelshotCaption: caption,
+      tableHeading: heading
+    });
+  });
+
+  elements.modeTabs.innerHTML = '';
+  elements.modeTabs.appendChild(tabFragment);
+  elements.modePanels.innerHTML = '';
+  elements.modePanels.appendChild(panelFragment);
+
+  const buttons = Array.from(elements.modeTabs.querySelectorAll('.tab-button'));
+  buttons.forEach((button, index) => {
+    button.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+        event.preventDefault();
+        const direction = event.key === 'ArrowRight' ? 1 : -1;
+        const nextIndex = (index + direction + buttons.length) % buttons.length;
+        const nextButton = buttons[nextIndex];
+        nextButton.focus();
+        setActiveMode(nextButton.dataset.mode);
+      }
+    });
+  });
+}
+
+function setActiveMode(modeKey) {
+  if (!modeElements.has(modeKey)) {
+    return;
+  }
+  state.activeMode = modeKey;
+  modeElements.forEach((refs, key) => {
+    const isActive = key === modeKey;
+    refs.button.classList.toggle('active', isActive);
+    refs.button.setAttribute('aria-selected', String(isActive));
+    refs.button.setAttribute('tabindex', isActive ? '0' : '-1');
+    refs.panel.classList.toggle('active', isActive);
+  });
+  /* The online/offline switch filters match data only. */
+  const sourceToggle = document.getElementById('source-toggle');
+  if (sourceToggle) {
+    sourceToggle.style.display = modeKey === GHOST_TAB_KEY ? 'none' : 'inline-flex';
+  }
+  renderModeTable(modeKey);
+}
+
+function updateModeTabsLanguage() {
+  modeElements.forEach((refs, key) => {
+    refs.button.textContent = refs.isGhostTab ? t('ghosts.tab') : humanizeMode(key);
+  });
+}
+
+function getColumnsForMode(config) {
+  if (config.type === 'race') {
+    return [
+      { key: 'rank', labelKey: 'leaderboard.headers.rank' },
+      { key: 'player', labelKey: 'leaderboard.headers.player' },
+      { key: 'time', labelKey: 'leaderboard.headers.time' },
+      { key: 'vehicle', labelKey: 'leaderboard.headers.vehicle' },
+      { key: 'recorded', labelKey: 'leaderboard.headers.recorded' }
+    ];
+  }
+  if (config.type === 'deathmatch') {
+    return [
+      { key: 'rank', labelKey: 'deathmatch.headers.rank' },
+      { key: 'player', labelKey: 'deathmatch.headers.player' },
+      { key: 'kdr', labelKey: 'deathmatch.headers.kdr' },
+      { key: 'kills', labelKey: 'deathmatch.headers.kills' },
+      { key: 'deaths', labelKey: 'deathmatch.headers.deaths' },
+      { key: 'recorded', labelKey: 'deathmatch.headers.recorded' }
+    ];
+  }
+  if (config.type === 'derby') {
+    return [
+      { key: 'rank', labelKey: 'deathmatch.headers.rank' },
+      { key: 'player', labelKey: 'deathmatch.headers.player' },
+      { key: 'kdr', labelKey: 'deathmatch.headers.kdr' },
+      { key: 'kills', labelKey: 'deathmatch.headers.kills' },
+      { key: 'deaths', labelKey: 'deathmatch.headers.deaths' },
+      { key: 'recorded', labelKey: 'deathmatch.headers.recorded' }
+    ];
+  }
+  if (config.type === 'survival') {
+    return [
+      { key: 'rank', labelKey: 'leaderboard.headers.rank' },
+      { key: 'player', labelKey: 'leaderboard.headers.player' },
+      { key: 'metric', labelKey: 'mode.headers.metric' },
+      { key: 'value', labelKey: 'ctf.headers.value' },
+      { key: 'recorded', labelKey: 'ctf.headers.recorded' }
+    ];
+  }
+  return [
+    { key: 'rank', labelKey: 'leaderboard.headers.rank' },
+    { key: 'player', labelKey: 'leaderboard.headers.player' },
+    { key: 'metric', labelKey: 'mode.headers.metric' },
+    { key: 'value', labelKey: 'ctf.headers.value' },
+    { key: 'recorded', labelKey: 'ctf.headers.recorded' }
+  ];
+}
+
+function updateModeOptions() {
+  MODE_CONFIG.forEach(({ key }) => updateModeOptionsForMode(key));
+}
+
+function updateModeOptionsForMode(modeKey) {
+  const refs = modeElements.get(modeKey);
+  if (!refs) {
+    return;
+  }
+  const modeMap = state.modeData.get(modeKey);
+  const previous = state.selectedMaps.get(modeKey);
+  refs.mapSelect.innerHTML = '';
+  if (!modeMap || modeMap.size === 0) {
+    refs.mapSelect.disabled = true;
+    state.selectedMaps.delete(modeKey);
+    return;
+  }
+  const locale = getLocale();
+  const options = Array.from(modeMap.values())
+    .map((entry) => ({
+      value: entry.mapKey,
+      label: humanizeMapName(entry.map)
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, locale));
+  options.forEach(({ value, label }) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    refs.mapSelect.appendChild(option);
+  });
+  refs.mapSelect.disabled = false;
+  if (previous && modeMap.has(previous)) {
+    refs.mapSelect.value = previous;
+  } else {
+    refs.mapSelect.value = options[0].value;
+    state.selectedMaps.set(modeKey, options[0].value);
+  }
+}
+
+function renderModeTable(modeKey) {
+  if (modeKey === GHOST_TAB_KEY) {
+    renderGhostPanel();
+    return;
+  }
+  const refs = modeElements.get(modeKey);
+  if (!refs) {
+    return;
+  }
+  const config = MODE_CONFIG_MAP.get(modeKey);
+  const modeMap = state.modeData.get(modeKey) || new Map();
+  if (!state.selectedMaps.has(modeKey) && modeMap.size) {
+    const firstKey = modeMap.keys().next().value;
+    state.selectedMaps.set(modeKey, firstKey);
+    if (refs.mapSelect && !refs.mapSelect.value) {
+      refs.mapSelect.value = firstKey;
+    }
+  }
+  const selectedMap = state.selectedMaps.get(modeKey);
+  if (refs.mapSelect && selectedMap && refs.mapSelect.value !== selectedMap) {
+    refs.mapSelect.value = selectedMap;
+  }
+
+  const columns = getColumnsForMode(config);
+  refs.tableHeadRow.innerHTML = '';
+  columns.forEach((column) => {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.dataset.i18n = column.labelKey;
+    th.textContent = t(column.labelKey);
+    refs.tableHeadRow.appendChild(th);
+  });
+
+  if (!selectedMap || !modeMap.has(selectedMap)) {
+    refs.tableBody.innerHTML = '';
+    refs.tableContainer.hidden = true;
+    refs.empty.hidden = false;
+    updateLevelshot(modeKey, null);
+    return;
+  }
+
+  const mapData = modeMap.get(selectedMap);
+  updateLevelshot(modeKey, mapData);
+
+  const rows = mapData.entries.slice(0, 10);
+  refs.tableBody.innerHTML = '';
+  if (!rows.length) {
+    refs.tableContainer.hidden = true;
+    refs.empty.hidden = false;
+    return;
+  }
+
+  refs.tableContainer.hidden = false;
+  refs.empty.hidden = true;
+
+  rows.forEach((entry, index) => {
+    const tr = document.createElement('tr');
+    if (entry.matchId) {
+      tr.style.cursor = 'pointer';
+      tr.title = 'Click to view match details';
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('.player-link')) return;
+        showMatchDetails(entry.matchId);
+      });
+    }
+    columns.forEach((column) => {
+      const td = document.createElement('td');
+      switch (column.key) {
+        case 'rank':
+          td.textContent = String(index + 1);
+          break;
+        case 'player': {
+          td.classList.add('leaderboard-player');
+          const strong = document.createElement('strong');
+          if (entry.playerId && !entry.isBot) {
+            const link = document.createElement('a');
+            link.href = '#';
+            link.className = 'player-link';
+            link.textContent = entry.player || t('common.unknown');
+            link.title = 'View player profile';
+            link.addEventListener('click', (e) => {
+              e.preventDefault();
+              showPlayerProfile(profileIdFor(entry), entry.player);
+            });
+            strong.appendChild(link);
+          } else {
+            strong.textContent = entry.player || t('common.unknown');
+          }
+          td.appendChild(strong);
+          if (entry.isBot) {
+            const badge = document.createElement('span');
+            badge.className = 'bot-tag';
+            const tagText = t('leaderboard.player.botTag');
+            badge.textContent = tagText;
+            const tooltip = t('leaderboard.player.botTooltip');
+            badge.title = tooltip;
+            badge.setAttribute('aria-label', tooltip);
+            td.appendChild(badge);
+          }
+          break;
+        }
+        case 'time':
+          td.textContent = formatRaceTime(entry.time);
+          break;
+        case 'vehicle':
+          td.textContent = entry.vehicle ? entry.vehicle : '–';
+          break;
+        case 'kdr':
+          td.textContent = formatRatio(entry.ratio);
+          break;
+        case 'kills':
+          td.textContent = entry.kills != null ? String(entry.kills) : '–';
+          break;
+        case 'deaths':
+          td.textContent = entry.deaths != null ? String(entry.deaths) : '–';
+          break;
+        case 'metric': {
+          const labelKey = OBJECTIVE_METRIC_LABEL_KEYS[entry.metricType] || OBJECTIVE_METRIC_LABEL_KEYS.value;
+          td.textContent = t(labelKey);
+          break;
+        }
+        case 'value':
+          td.textContent = entry.value != null ? String(entry.value) : '–';
+          break;
+        case 'recorded':
+          td.textContent = formatDate(entry.recordedAt || entry.startedAt);
+          break;
+        default:
+          td.textContent = '';
+      }
+      tr.appendChild(td);
+    });
+    refs.tableBody.appendChild(tr);
+  });
+}
+
+async function updateLevelshot(modeKey, mapData) {
+  const refs = modeElements.get(modeKey);
+  if (!refs) {
+    return;
+  }
+
+  const mapName = mapData ? mapData.map : '';
+  const humanized = mapName ? humanizeMapName(mapName) : '';
+  refs.levelshotCaption.textContent = humanized;
+  refs.levelshot.alt = humanized || '';
+
+  const requestId = `${modeKey}-${++levelshotRequestCounter}`;
+  refs.levelshot.dataset.requestId = requestId;
+  refs.levelshot.hidden = true;
+  refs.levelshotFallback.hidden = false;
+  refs.levelshot.removeAttribute('src');
+
+  if (!mapData) {
+    return;
+  }
+
+  try {
+    const resolved = await resolveLevelshotAsset(mapName);
+    if (refs.levelshot.dataset.requestId !== requestId) {
+      return;
+    }
+    if (!resolved || !resolved.src) {
+      refs.levelshot.hidden = true;
+      refs.levelshotFallback.hidden = false;
+      return;
+    }
+    refs.levelshot.hidden = false;
+    refs.levelshotFallback.hidden = true;
+    refs.levelshot.src = resolved.src;
+  } catch (error) {
+    console.error('Failed to load levelshot', error);
+    refs.levelshot.hidden = true;
+    refs.levelshotFallback.hidden = false;
+  }
+}
+
+function formatRaceTime(seconds) {
+  if (seconds === null || seconds === undefined) {
+    return '–';
+  }
+  return formatSeconds(seconds);
+}
+
+function formatRatio(value) {
+  if (!Number.isFinite(value)) {
+    return '–';
+  }
+  if (value >= 10) {
+    return value.toFixed(1);
+  }
+  return value.toFixed(2);
+}
+
+function formatDate(value) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+    return '–';
+  }
+  return formatter.format(value);
+}
+
+async function fetchLevelshotManifest() {
+  if (levelshotManifest !== null) {
+    return levelshotManifest;
+  }
+  try {
+    const response = await fetch(`${API_BASE}/maps/levelshots`);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    levelshotManifest = await response.json();
+  } catch (error) {
+    console.warn('Could not load levelshot manifest, falling back to probing.', error);
+    levelshotManifest = {};
+  }
+  return levelshotManifest;
+}
+
+async function resolveLevelshotAsset(mapName) {
+  const mapKey = normalizeLevelshotKey(mapName);
+
+  // Fast path: check in-memory cache
+  if (mapKey && levelshotMapCache.has(mapKey)) {
+    return levelshotMapCache.get(mapKey);
+  }
+
+  // Load manifest once (single request for all maps)
+  const manifest = await fetchLevelshotManifest();
+  const { base } = extractMapBase(mapName);
+  const lookupKey = (base || '').toLowerCase();
+
+  if (lookupKey && manifest && typeof manifest[lookupKey] === 'string') {
+    const ext = manifest[lookupKey];
+    const url = `images/${encodeURIComponent(lookupKey)}.${ext}`;
+    let resolved = null;
+
+    if (ext === 'tga') {
+      try {
+        const dataUrl = await loadTgaAsDataUrl(url);
+        if (dataUrl) {
+          resolved = { src: dataUrl, isDataUrl: true };
+        }
+      } catch (error) {
+        resolved = null;
+      }
+    } else {
+      resolved = { src: url, isDataUrl: false };
+    }
+
+    if (mapKey) {
+      levelshotMapCache.set(mapKey, resolved);
+    }
+    return resolved;
+  }
+
+  // Not in manifest → no levelshot available
+  if (mapKey) {
+    levelshotMapCache.set(mapKey, null);
+  }
+  return null;
+}
+
+function getLevelshotCandidates(mapName) {
+  const { original, base } = extractMapBase(mapName);
+  const variants = new Set();
+  [original, base].forEach((value) => {
+    if (value) {
+      variants.add(value);
+      variants.add(value.toLowerCase());
+    }
+  });
+  const seen = new Set();
+  const candidates = [];
+  variants.forEach((variant) => {
+    LEVELSHOT_EXTENSIONS.forEach((ext) => {
+      const cacheKey = `${variant}|${ext}`;
+      if (!seen.has(cacheKey)) {
+        seen.add(cacheKey);
+        candidates.push({
+          url: `images/${encodeURIComponent(variant)}.${ext}`,
+          ext,
+          cacheKey
+        });
+      }
+    });
+  });
+  return candidates;
+}
+
+function normalizeLevelshotKey(mapName) {
+  const { base } = extractMapBase(mapName);
+  return base ? base.toLowerCase() : '';
+}
+
+function extractMapBase(mapName) {
+  if (typeof mapName !== 'string') {
+    return { original: '', base: '' };
+  }
+  const trimmed = mapName.trim();
+  if (!trimmed || trimmed === '–' || trimmed === '-') {
+    return { original: '', base: '' };
+  }
+  const withoutExtension = trimmed.replace(/\.[^./\\]+$/, '');
+  if (!withoutExtension) {
+    return { original: '', base: '' };
+  }
+  const segments = withoutExtension.split(/[\\/]/);
+  const base = segments[segments.length - 1] || withoutExtension;
+  return { original: withoutExtension, base };
+}
+
+function isImageContentType(contentType) {
+  if (typeof contentType !== 'string') {
+    return false;
+  }
+  const normalized = contentType.split(';', 1)[0].trim().toLowerCase();
+  return normalized.startsWith('image/');
+}
+
+async function probeImageCandidate(url) {
+  let headResponse = null;
+  let headError = null;
+  try {
+    headResponse = await fetch(url, { method: 'HEAD' });
+  } catch (error) {
+    headError = error;
+  }
+
+  if (headResponse) {
+    if (headResponse.ok) {
+      const contentType = headResponse.headers.get('Content-Type');
+      if (isImageContentType(contentType)) {
+        return;
+      }
+      throw new Error(`Unsupported content type: ${contentType || 'unknown'}`);
+    }
+
+    if (headResponse.status !== 405) {
+      headError = new Error(`HTTP ${headResponse.status}`);
+    }
+  }
+
+  let fallbackResponse;
+  try {
+    fallbackResponse = await fetch(url);
+  } catch (error) {
+    throw headError ?? error;
+  }
+
+  if (!fallbackResponse.ok) {
+    throw headError ?? new Error(`HTTP ${fallbackResponse.status}`);
+  }
+
+  const fallbackContentType = fallbackResponse.headers.get('Content-Type');
+  if (isImageContentType(fallbackContentType)) {
+    return;
+  }
+  throw new Error(`Unsupported content type: ${fallbackContentType || 'unknown'}`);
+}
+
+async function loadTgaAsDataUrl(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const buffer = await response.arrayBuffer();
+  if (buffer.byteLength < 18) {
+    throw new Error('Invalid TGA file');
+  }
+
+  const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  const idLength = view.getUint8(0);
+  const colorMapType = view.getUint8(1);
+  const imageType = view.getUint8(2);
+  const width = view.getUint16(12, true);
+  const height = view.getUint16(14, true);
+  const pixelDepth = view.getUint8(16);
+  const descriptor = view.getUint8(17);
+
+  if (!width || !height) {
+    throw new Error('Invalid TGA dimensions');
+  }
+  if (colorMapType !== 0) {
+    throw new Error('Unsupported TGA color map');
+  }
+  if (![2, 10].includes(imageType)) {
+    throw new Error('Unsupported TGA image type');
+  }
+  if (pixelDepth !== 24 && pixelDepth !== 32) {
+    throw new Error('Unsupported TGA pixel depth');
+  }
+
+  const bytesPerPixel = pixelDepth / 8;
+  let offset = 18 + idLength;
+  if (offset > bytes.length) {
+    throw new Error('Corrupted TGA file');
+  }
+
+  const totalPixels = width * height;
+  const pixels = new Uint8ClampedArray(totalPixels * 4);
+  const flipVertically = (descriptor & 0x20) === 0;
+  const flipHorizontally = (descriptor & 0x10) !== 0;
+
+  const setPixel = (index, r, g, b, a) => {
+    let x = index % width;
+    let y = Math.floor(index / width);
+    if (flipHorizontally) {
+      x = width - 1 - x;
+    }
+    if (flipVertically) {
+      y = height - 1 - y;
+    }
+    const dest = (y * width + x) * 4;
+    pixels[dest] = r;
+    pixels[dest + 1] = g;
+    pixels[dest + 2] = b;
+    pixels[dest + 3] = a;
+  };
+
+  const readColor = () => {
+    if (offset + bytesPerPixel > bytes.length) {
+      throw new Error('Unexpected end of TGA data');
+    }
+    const b = bytes[offset++];
+    const g = bytes[offset++];
+    const r = bytes[offset++];
+    const a = bytesPerPixel === 4 ? bytes[offset++] : 255;
+    return { r, g, b, a };
+  };
+
+  if (imageType === 2) {
+    for (let i = 0; i < totalPixels; i += 1) {
+      const color = readColor();
+      setPixel(i, color.r, color.g, color.b, color.a);
+    }
+  } else {
+    let pixelIndex = 0;
+    while (pixelIndex < totalPixels) {
+      if (offset >= bytes.length) {
+        throw new Error('Unexpected end of TGA data');
+      }
+      const packet = bytes[offset++];
+      const count = (packet & 0x7f) + 1;
+      if (packet & 0x80) {
+        const color = readColor();
+        for (let i = 0; i < count && pixelIndex < totalPixels; i += 1) {
+          setPixel(pixelIndex++, color.r, color.g, color.b, color.a);
+        }
+      } else {
+        for (let i = 0; i < count && pixelIndex < totalPixels; i += 1) {
+          const color = readColor();
+          setPixel(pixelIndex++, color.r, color.g, color.b, color.a);
+        }
+      }
+    }
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('Canvas API unavailable');
+  }
+  context.putImageData(new ImageData(pixels, width, height), 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+function humanizeMapName(map) {
+  if (typeof map !== 'string') {
+    return t('map.unknown');
+  }
+  const trimmed = map.trim();
+  if (!trimmed) {
+    return t('map.unknown');
+  }
+  if (state.mapMetadata instanceof Map && state.mapMetadata.size > 0) {
+    const normalizedKey = normalizeLevelshotKey(trimmed);
+    if (normalizedKey && state.mapMetadata.has(normalizedKey)) {
+      const displayName = state.mapMetadata.get(normalizedKey);
+      if (typeof displayName === 'string') {
+        const cleaned = displayName.trim();
+        if (cleaned) {
+          return cleaned;
+        }
+      }
+    }
+  }
+  const base = trimmed.replace(/\.[^./\\]+$/, '');
+  const normalized = base.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').toLowerCase();
+  const locale = getLocale();
+  return normalized.replace(/(^|\s)([\p{L}])/gu, (match, prefix, char) => prefix + char.toLocaleUpperCase(locale));
+}
+
+function prepareModeData() {
+  const modeData = new Map();
+  MODE_CONFIG.forEach(({ key }) => {
+    modeData.set(key, new Map());
+  });
+
+  function addEntry(modeKey, entry) {
+    const maps = modeData.get(modeKey);
+    if (!maps) {
+      return;
+    }
+    const mapKey = entry.mapKey || entry.map.toLowerCase();
+    if (!maps.has(mapKey)) {
+      maps.set(mapKey, { map: entry.map, mapKey, entries: [] });
+    }
+    maps.get(mapKey).entries.push(entry);
+  }
+
+  for (const entry of state.leaderboard) {
+    addEntry(entry.modeKey, entry);
+  }
+  for (const entry of state.deathmatchLeaderboard) {
+    addEntry(entry.modeKey, entry);
+  }
+  for (const entry of state.derbyLeaderboard) {
+    addEntry(entry.modeKey, entry);
+  }
+  for (const entry of state.survivalLeaderboard) {
+    addEntry(entry.modeKey, entry);
+  }
+  for (const entry of state.objectiveLeaderboard) {
+    addEntry(entry.modeKey, entry);
+  }
+  for (const entry of state.eliminationLeaderboard) {
+    addEntry(entry.modeKey, entry);
+  }
+
+  const locale = getLocale();
+  modeData.forEach((maps, modeKey) => {
+    const config = MODE_CONFIG_MAP.get(modeKey);
+    maps.forEach((mapData) => {
+      if (config.type === 'race') {
+        mapData.entries.sort((a, b) => {
+          if (a.time !== b.time) {
+            return a.time - b.time;
+          }
+          return a.player.localeCompare(b.player, locale);
+        });
+      } else if (config.type === 'deathmatch' || config.type === 'derby') {
+        mapData.entries.sort((a, b) => {
+          if (b.ratio !== a.ratio) {
+            return b.ratio - a.ratio;
+          }
+          if (b.kills !== a.kills) {
+            return b.kills - a.kills;
+          }
+          if (a.deaths !== b.deaths) {
+            return a.deaths - b.deaths;
+          }
+          return a.player.localeCompare(b.player, locale);
+        });
+      } else {
+        const priority = OBJECTIVE_MODE_PRIORITY[modeKey] || OBJECTIVE_DEFAULT_PRIORITY;
+        mapData.entries.sort((a, b) => {
+          if (b.value !== a.value) {
+            return b.value - a.value;
+          }
+          const priorityA = priorityIndex(a.metricType, priority);
+          const priorityB = priorityIndex(b.metricType, priority);
+          if (priorityA !== priorityB) {
+            return priorityA - priorityB;
+          }
+          const dateA = a.recordedAt || a.startedAt;
+          const dateB = b.recordedAt || b.startedAt;
+          const timeA = dateA instanceof Date ? dateA.getTime() : 0;
+          const timeB = dateB instanceof Date ? dateB.getTime() : 0;
+          if (timeA !== timeB) {
+            return timeB - timeA;
+          }
+          return a.player.localeCompare(b.player, locale);
+        });
+      }
+    });
+  });
+
+  state.modeData = modeData;
+}
+
+function buildRaceLeaderboard() {
+  if (!state.aggregation) {
+    state.leaderboard = [];
+    return;
+  }
+  const locale = getLocale();
+  const entries = Array.from(state.aggregation.raceBest.values());
+  entries.forEach((entry) => {
+    entry.mode = humanizeMode(entry.modeKey);
+  });
+  entries.sort((a, b) => {
+    if (a.time !== b.time) {
+      return a.time - b.time;
+    }
+    const mapCompare = a.map.localeCompare(b.map, locale);
+    if (mapCompare !== 0) {
+      return mapCompare;
+    }
+    return a.player.localeCompare(b.player, locale);
+  });
+  state.leaderboard = entries;
+}
+
+function buildDeathmatchLeaderboard() {
+  if (!state.aggregation) {
+    state.deathmatchLeaderboard = [];
+    return;
+  }
+  const locale = getLocale();
+  const entries = Array.from(state.aggregation.deathmatchBest.values());
+  entries.forEach((entry) => {
+    entry.mode = humanizeMode(entry.modeKey);
+  });
+  entries.sort((a, b) => {
+    if (b.ratio !== a.ratio) {
+      return b.ratio - a.ratio;
+    }
+    if (b.kills !== a.kills) {
+      return b.kills - a.kills;
+    }
+    if (a.deaths !== b.deaths) {
+      return a.deaths - b.deaths;
+    }
+    return a.player.localeCompare(b.player, locale);
+  });
+  state.deathmatchLeaderboard = entries;
+}
+
+function buildDerbyLeaderboard() {
+  if (!state.aggregation) {
+    state.derbyLeaderboard = [];
+    return;
+  }
+  const locale = getLocale();
+  const entries = Array.from(state.aggregation.derbyBest.values());
+  entries.forEach((entry) => {
+    entry.mode = humanizeMode(entry.modeKey);
+  });
+  entries.sort((a, b) => {
+    if (b.ratio !== a.ratio) {
+      return b.ratio - a.ratio;
+    }
+    if (b.kills !== a.kills) {
+      return b.kills - a.kills;
+    }
+    if (a.deaths !== b.deaths) {
+      return a.deaths - b.deaths;
+    }
+    return a.player.localeCompare(b.player, locale);
+  });
+  state.derbyLeaderboard = entries;
+}
+
+function buildSurvivalLeaderboard() {
+  if (!state.aggregation) {
+    state.survivalLeaderboard = [];
+    return;
+  }
+  const locale = getLocale();
+  const entries = Array.from(state.aggregation.survivalBest.values());
+  entries.forEach((entry) => {
+    entry.mode = humanizeMode(entry.modeKey);
+  });
+  entries.sort((a, b) => {
+    if (b.value !== a.value) {
+      return b.value - a.value;
+    }
+    const priority = OBJECTIVE_MODE_PRIORITY.gt_lcs || OBJECTIVE_DEFAULT_PRIORITY;
+    const priorityA = priorityIndex(a.metricType, priority);
+    const priorityB = priorityIndex(b.metricType, priority);
+    if (priorityA !== priorityB) {
+      return priorityA - priorityB;
+    }
+    const dateA = a.recordedAt || a.startedAt;
+    const dateB = b.recordedAt || b.startedAt;
+    const timeA = dateA instanceof Date ? dateA.getTime() : 0;
+    const timeB = dateB instanceof Date ? dateB.getTime() : 0;
+    if (timeA !== timeB) {
+      return timeB - timeA;
+    }
+    return a.player.localeCompare(b.player, locale);
+  });
+  state.survivalLeaderboard = entries;
+}
+
+function buildObjectiveLeaderboard() {
+  if (!state.aggregation) {
+    state.objectiveLeaderboard = [];
+    state.eliminationLeaderboard = [];
+    return;
+  }
+  const locale = getLocale();
+
+  function sortObjectiveEntries(map) {
+    return Array.from(map.values()).sort((a, b) => {
+      if (b.value !== a.value) {
+        return b.value - a.value;
+      }
+      const priorityA = priorityIndex(
+        a.metricType,
+        OBJECTIVE_MODE_PRIORITY[a.modeKey] || OBJECTIVE_DEFAULT_PRIORITY
+      );
+      const priorityB = priorityIndex(
+        b.metricType,
+        OBJECTIVE_MODE_PRIORITY[b.modeKey] || OBJECTIVE_DEFAULT_PRIORITY
+      );
+      if (priorityA !== priorityB) {
+        return priorityA - priorityB;
+      }
+      const dateA = a.recordedAt || a.startedAt;
+      const dateB = b.recordedAt || b.startedAt;
+      const timeA = dateA instanceof Date ? dateA.getTime() : 0;
+      const timeB = dateB instanceof Date ? dateB.getTime() : 0;
+      if (timeA !== timeB) {
+        return timeB - timeA;
+      }
+      return a.player.localeCompare(b.player, locale);
+    });
+  }
+
+  const objectiveEntries = sortObjectiveEntries(state.aggregation.objectiveBest);
+  objectiveEntries.forEach((entry) => {
+    entry.mode = humanizeMode(entry.modeKey);
+  });
+  state.objectiveLeaderboard = objectiveEntries;
+
+  const eliminationEntries = sortObjectiveEntries(state.aggregation.eliminationBest);
+  eliminationEntries.forEach((entry) => {
+    entry.mode = humanizeMode(entry.modeKey);
+  });
+  state.eliminationLeaderboard = eliminationEntries;
+}
+
+function prepareEliminationMetricContext(entries) {
+  const positions = new Map();
+  let ordinal = 0;
+  if (!Array.isArray(entries)) {
+    return { rosterSize: 0, positions };
+  }
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    const player = extractLeaderboardPlayer(entry);
+    if (!player) {
+      continue;
+    }
+    ordinal += 1;
+    positions.set(index, {
+      ordinalPosition: ordinal,
+      explicitPosition: extractEliminationPosition(entry)
+    });
+  }
+  return { rosterSize: ordinal, positions };
+}
+
+function updateSummary() {
+  const aggregation = state.aggregation || createEmptyAggregation();
+  const total = aggregation.totalMatches;
+  elements.statTotal.textContent = total ? total.toString() : '–';
+
+  const modeCount = aggregation.modeCounts.size;
+  elements.statModes.textContent = modeCount ? modeCount.toString() : '–';
+
+  const lastDate = aggregation.lastDate;
+  elements.statLast.textContent =
+    lastDate instanceof Date && !Number.isNaN(lastDate.getTime()) ? formatter.format(lastDate) : '–';
+
+  const playerCount = aggregation.playerNames.size;
+  elements.statPlayers.textContent = playerCount ? playerCount.toString() : '–';
+
+  const items = Array.from(aggregation.modeCounts.entries())
+    .map(([modeKey, count]) => ({
+      label: modeKey === '__unknown__' ? t('mode.unknown') : humanizeMode(modeKey),
+      count
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  if (!items.length) {
+    elements.modeBreakdown.innerHTML = `<li>${escapeHtml(t('breakdown.empty'))}</li>`;
+  } else {
+    elements.modeBreakdown.innerHTML = items
+      .map((item) => `<li><span>${escapeHtml(item.label)}</span><span>${item.count}</span></li>`)
+      .join('');
+  }
+}
+
+async function fetchMapMetadata() {
+  const metadata = new Map();
+  try {
+    const response = await fetch(`${API_BASE}/maps/metadata`);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    const mapEntries = payload && typeof payload === 'object' && payload.maps && typeof payload.maps === 'object'
+      ? payload.maps
+      : null;
+    if (!mapEntries) {
+      return metadata;
+    }
+    Object.entries(mapEntries).forEach(([rawKey, rawName]) => {
+      if (typeof rawName !== 'string') {
+        return;
+      }
+      const displayName = rawName.trim();
+      if (!displayName) {
+        return;
+      }
+      const normalizedKey = normalizeLevelshotKey(rawKey);
+      if (!normalizedKey) {
+        const { base } = extractMapBase(rawKey);
+        if (base) {
+          const fallbackKey = normalizeLevelshotKey(base);
+          if (fallbackKey) {
+            metadata.set(fallbackKey, displayName);
+          }
+        }
+        return;
+      }
+      metadata.set(normalizedKey, displayName);
+    });
+  } catch (error) {
+    console.warn('Failed to load map metadata', error);
+  }
+  return metadata;
+}
+
+// ── Source toggle (Online / Offline / All) ────────────────────────────────────
+
+function renderSourceToggle() {
+  const existing = document.getElementById('source-toggle');
+  if (existing) return;
+
+  const panel = document.querySelector('.tabbed-panel');
+  if (!panel) return;
+
+  const bar = document.createElement('div');
+  bar.id = 'source-toggle';
+  bar.style.cssText = 'display:inline-flex;gap:6px;margin-bottom:16px;align-items:center;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:12px;padding:5px';
+
+  [
+    { key: 'online',  labelDe: 'Online',  labelEn: 'Online'  },
+    { key: 'offline', labelDe: 'Offline', labelEn: 'Offline' },
+    { key: 'all',     labelDe: 'Alle',    labelEn: 'All'     }
+  ].forEach(({ key, labelEn }) => {
+    const btn = document.createElement('button');
+    btn.dataset.source = key;
+    btn.textContent = labelEn;
+    btn.style.cssText = 'padding:6px 18px;border-radius:8px;border:none;background:transparent;color:var(--text-muted);font-size:.82rem;font-weight:600;cursor:pointer;transition:background .15s,color .15s';
+    btn.addEventListener('click', () => setActiveSource(key));
+    bar.appendChild(btn);
+  });
+
+  panel.insertBefore(bar, panel.firstChild);
+  updateSourceToggleUI();
+  if (state.activeMode === GHOST_TAB_KEY) {
+    bar.style.display = 'none';
+  }
+}
+
+function updateSourceToggleUI() {
+  const btns = document.querySelectorAll('#source-toggle button[data-source]');
+  btns.forEach((btn) => {
+    const active = btn.dataset.source === state.activeSource;
+    btn.style.background  = active ? 'var(--accent-soft)' : 'transparent';
+    btn.style.color       = active ? 'var(--accent)'       : 'var(--text-muted)';
+    btn.style.boxShadow   = active ? 'inset 0 0 0 1px rgba(93,139,255,0.45)' : 'none';
+    btn.style.borderRadius = '8px';
+  });
+}
+
+function setActiveSource(source) {
+  state.activeSource = source;
+  updateSourceToggleUI();
+  rebuildForSource();
+}
+
+function rebuildForSource() {
+  if (state.activeSource === 'online') {
+    state.aggregation = state.aggregationOnline;
+  } else if (state.activeSource === 'offline') {
+    state.aggregation = state.aggregationOffline;
+  } else {
+    // 'all' – re-aggregate everything
+    state.aggregation = createEmptyAggregation();
+    for (const match of (state.allMatches || [])) {
+      ingestMatchInto(match, state.aggregation);
+    }
+  }
+  buildRaceLeaderboard();
+  buildDeathmatchLeaderboard();
+  buildDerbyLeaderboard();
+  buildSurvivalLeaderboard();
+  buildObjectiveLeaderboard();
+  prepareModeData();
+  updateSummary();
+  updateModeOptions();
+  MODE_CONFIG.forEach(({ key }) => renderModeTable(key));
+}
+
+async function loadMatches() {
+  setModeStatus('mode.status.loading');
+  try {
+    state.mapMetadata = new Map();
+    state.aggregation = createEmptyAggregation();
+    state.aggregationOnline = createEmptyAggregation();
+    state.aggregationOffline = createEmptyAggregation();
+    state.leaderboard = [];
+    state.deathmatchLeaderboard = [];
+    state.derbyLeaderboard = [];
+    state.survivalLeaderboard = [];
+    state.objectiveLeaderboard = [];
+    state.eliminationLeaderboard = [];
+    state.modeData = new Map();
+    state.allMatches = [];
+
+    const response = await fetch(`${API_BASE}/matches/index`);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    if (!payload || !Array.isArray(payload.matches)) {
+      throw new Error(t('errors.unexpectedResponse'));
+    }
+
+    state.allMatches = payload.matches;
+    for (const match of payload.matches) {
+      const src = (match.source === 'offline') ? 'offline' : 'online';
+      ingestMatchInto(match, state.aggregation);
+      if (src === 'online') {
+        ingestMatchInto(match, state.aggregationOnline);
+      } else {
+        ingestMatchInto(match, state.aggregationOffline);
+      }
+    }
+
+    payload.matches = undefined;
+
+    if (!state.aggregation.totalMatches) {
+      state.modeData = new Map();
+      state.mapMetadata = new Map();
+      updateSummary();
+      updateModeOptions();
+      MODE_CONFIG.forEach(({ key }) => renderModeTable(key));
+      setModeStatus('mode.status.empty');
+      return;
+    }
+
+    [state.mapMetadata] = await Promise.all([fetchMapMetadata(), fetchLevelshotManifest()]);
+    renderSourceToggle();
+    rebuildForSource();
+    setModeStatus('mode.status.ready', { count: state.aggregation.totalMatches });
+  } catch (error) {
+    console.error(error);
+    state.aggregation = createEmptyAggregation();
+    state.leaderboard = [];
+    state.deathmatchLeaderboard = [];
+    state.derbyLeaderboard = [];
+    state.survivalLeaderboard = [];
+    state.objectiveLeaderboard = [];
+    state.eliminationLeaderboard = [];
+    state.modeData = new Map();
+    state.mapMetadata = new Map();
+    updateSummary();
+    updateModeOptions();
+    MODE_CONFIG.forEach(({ key }) => renderModeTable(key));
+    setModeStatus('mode.status.error', { message: error.message }, true);
+  }
+}
+
+// Newest player id per name. A player whose id changed (new profile id on
+// the client) has matches under both ids; leaderboard rows are grouped by
+// name and keep the id of the match with the best value, so their links would
+// open the old profile. Rows link the newest id instead.
+const latestPlayerIds = new Map();
+
+function rememberPlayerId(entry, time) {
+  if (!entry || typeof entry !== 'object' || extractIsBot(entry)) {
+    return;
+  }
+  const id = typeof entry.playerId === 'string' ? entry.playerId : '';
+  const name = extractLeaderboardPlayer(entry).toLowerCase();
+  if (!id || !name) {
+    return;
+  }
+  const known = latestPlayerIds.get(name);
+  if (!known || time >= known.time) {
+    latestPlayerIds.set(name, { id, time });
+  }
+}
+
+function profileIdFor(entry) {
+  const name = String(entry.playerLower || entry.player || '').toLowerCase();
+  const latest = name ? latestPlayerIds.get(name) : null;
+  return (latest && latest.id) || entry.playerId;
+}
+
+function ingestMatchInto(match, aggregation) {
+  if (!aggregation) {
+    return;
+  }
+
+  aggregation.totalMatches += 1;
+
+  const matchId = extractMatchId(match);
+  const startedAt = extractStart(match);
+  const recordedAt = extractRecordedAtFromMatchId(matchId);
+  const effectiveDate = startedAt || recordedAt || null;
+  if (effectiveDate instanceof Date && !Number.isNaN(effectiveDate.getTime())) {
+    if (!aggregation.lastDate || aggregation.lastDate.getTime() < effectiveDate.getTime()) {
+      aggregation.lastDate = effectiveDate;
+    }
+  }
+
+  const players = extractPlayers(match);
+  players.forEach((name) => {
+    if (name) {
+      aggregation.playerNames.add(name);
+    }
+  });
+
+  const rawMode = extractMode(match);
+  const modeKey = canonicalMode(rawMode);
+  // Count all modes in the breakdown, using '__unknown__' for unrecognised ones
+  // so they appear in the distribution without polluting any leaderboard.
+  const modeCountKey = modeKey ?? '__unknown__';
+  aggregation.modeCounts.set(modeCountKey, (aggregation.modeCounts.get(modeCountKey) || 0) + 1);
+
+  // Unknown mode: nothing to ingest into any leaderboard.
+  if (modeKey === null) {
+    return;
+  }
+
+  const entries = extractScoreboardEntries(match);
+  if (!entries.length) {
+    return;
+  }
+  {
+    const when = (effectiveDate instanceof Date && !Number.isNaN(effectiveDate.getTime())) ? effectiveDate.getTime() : 0;
+    entries.forEach((entry) => rememberPlayerId(entry, when));
+  }
+
+  const map = extractMap(match);
+  const mapKey = map.toLowerCase();
+  const context = {
+    map,
+    mapKey,
+    modeKey,
+    matchId,
+    startedAt,
+    recordedAt
+  };
+
+  if (RACE_MODE_KEYS.has(modeKey)) {
+    ingestRaceEntries(aggregation, entries, context);
+  } else if (DEATHMATCH_MODE_KEYS.has(modeKey)) {
+    ingestDeathmatchEntries(aggregation, entries, context);
+  } else if (DERBY_MODE_KEYS.has(modeKey)) {
+    ingestDerbyEntries(aggregation, entries, context);
+  } else if (SURVIVAL_MODE_KEYS.has(modeKey)) {
+    ingestSurvivalEntries(aggregation, entries, context);
+  } else if (OBJECTIVE_MODE_KEYS.has(modeKey)) {
+    ingestObjectiveEntries(aggregation, entries, context);
+  }
+}
+
+function ingestRaceEntries(aggregation, entries, context) {
+  const { map, mapKey, modeKey, matchId, startedAt, recordedAt } = context;
+  for (const entry of entries) {
+    const player = extractLeaderboardPlayer(entry);
+    if (!player) {
+      continue;
+    }
+    const seconds = findBestTime(entry);
+    if (seconds === null || !isReasonableRaceTime(seconds)) {
+      continue;
+    }
+    const playerLower = player.toLowerCase();
+    const key = `${modeKey}||${mapKey}||${playerLower}`;
+    const current = aggregation.raceBest.get(key);
+    if (!current || seconds < current.time) {
+      const vehicle = extractVehicle(entry);
+      const isBot = extractIsBot(entry);
+      const racePlayerId = entry.playerId || '';
+      aggregation.raceBest.set(key, {
+        player,
+        playerLower,
+        playerId: racePlayerId,
+        time: seconds,
+        map,
+        mapKey,
+        modeKey,
+        matchId,
+        startedAt,
+        recordedAt,
+        vehicle,
+        isBot
+      });
+    }
+  }
+}
+
+function ingestDeathmatchEntries(aggregation, entries, context) {
+  const { map, mapKey, modeKey, matchId, startedAt, recordedAt } = context;
+  for (const entry of entries) {
+    const player = extractLeaderboardPlayer(entry);
+    if (!player) {
+      continue;
+    }
+    const { kills, deaths } = extractKillDeath(entry);
+    if (kills === null && deaths === null) {
+      continue;
+    }
+    const safeKills = kills ?? 0;
+    const safeDeaths = deaths ?? 0;
+    const ratio = safeKills / Math.max(1, safeDeaths);
+    if (!Number.isFinite(ratio)) {
+      continue;
+    }
+    const playerLower = player.toLowerCase();
+    const key = `${modeKey}||${mapKey}||${playerLower}`;
+    const current = aggregation.deathmatchBest.get(key);
+    const shouldUpdate =
+      !current ||
+      ratio > current.ratio ||
+      (ratio === current.ratio && safeKills > current.kills) ||
+      (ratio === current.ratio && safeKills === current.kills && safeDeaths < current.deaths);
+    if (shouldUpdate) {
+      const isBot = extractIsBot(entry);
+      const dmPlayerId = entry.playerId || '';
+      aggregation.deathmatchBest.set(key, {
+        player,
+        playerLower,
+        playerId: dmPlayerId,
+        ratio,
+        kills: safeKills,
+        deaths: safeDeaths,
+        map,
+        mapKey,
+        modeKey,
+        matchId,
+        startedAt,
+        recordedAt,
+        isBot
+      });
+    }
+  }
+}
+
+function ingestDerbyEntries(aggregation, entries, context) {
+  const { map, mapKey, modeKey, matchId, startedAt, recordedAt } = context;
+  for (const entry of entries) {
+    const player = extractLeaderboardPlayer(entry);
+    if (!player) {
+      continue;
+    }
+    const { kills, deaths } = extractKillDeath(entry);
+    if (kills === null && deaths === null) {
+      continue;
+    }
+    const safeKills = kills ?? 0;
+    const safeDeaths = deaths ?? 0;
+    const ratio = safeKills / Math.max(1, safeDeaths);
+    if (!Number.isFinite(ratio)) {
+      continue;
+    }
+    const playerLower = player.toLowerCase();
+    const key = `${modeKey}||${mapKey}||${playerLower}`;
+    const current = aggregation.derbyBest.get(key);
+    const shouldUpdate =
+      !current ||
+      ratio > current.ratio ||
+      (ratio === current.ratio && safeKills > current.kills) ||
+      (ratio === current.ratio && safeKills === current.kills && safeDeaths < current.deaths);
+    if (shouldUpdate) {
+      const isBot = extractIsBot(entry);
+      const derbyPlayerId = entry.playerId || '';
+      aggregation.derbyBest.set(key, {
+        player,
+        playerLower,
+        playerId: derbyPlayerId,
+        ratio,
+        kills: safeKills,
+        deaths: safeDeaths,
+        map,
+        mapKey,
+        modeKey,
+        matchId,
+        startedAt,
+        recordedAt,
+        isBot
+      });
+    }
+  }
+}
+
+function ingestSurvivalEntries(aggregation, entries, context) {
+  ingestObjectiveEntries(aggregation, entries, { ...context, modeKey: 'gt_lcs' }, aggregation.survivalBest);
+}
+
+function ingestObjectiveEntries(aggregation, entries, context, customTargetMap = null) {
+  const { map, mapKey, modeKey, matchId, startedAt, recordedAt } = context;
+  const priority = OBJECTIVE_MODE_PRIORITY[modeKey] || OBJECTIVE_DEFAULT_PRIORITY;
+  const isElimination = modeKey === 'gt_elimination';
+  const targetMap = customTargetMap || (isElimination ? aggregation.eliminationBest : aggregation.objectiveBest);
+  const eliminationContext = isElimination ? prepareEliminationMetricContext(entries) : null;
+
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    const player = extractLeaderboardPlayer(entry);
+    if (!player) {
+      continue;
+    }
+    const eliminationInfo =
+      isElimination && eliminationContext ? eliminationContext.positions.get(index) : null;
+    const metricContext = isElimination
+      ? {
+          rosterSize: eliminationContext ? eliminationContext.rosterSize : null,
+          position: eliminationInfo ? eliminationInfo.explicitPosition : null,
+          ordinalPosition: eliminationInfo ? eliminationInfo.ordinalPosition : null
+        }
+      : undefined;
+    const metric = extractObjectiveMetric(entry, modeKey, metricContext);
+    if (metric.value === null) {
+      continue;
+    }
+
+    const playerLower = player.toLowerCase();
+    const key = `${modeKey}||${mapKey}||${playerLower}`;
+    const current = targetMap.get(key);
+    const metricPriority = priorityIndex(metric.type, priority);
+    const recordDate = recordedAt || startedAt;
+    const recordTime = recordDate instanceof Date ? recordDate.getTime() : 0;
+    let shouldUpdate = false;
+    if (!current) {
+      shouldUpdate = true;
+    } else if (metric.value > current.value) {
+      shouldUpdate = true;
+    } else if (metric.value === current.value) {
+      const currentPriority = priorityIndex(current.metricType, priority);
+      if (metricPriority < currentPriority) {
+        shouldUpdate = true;
+      } else if (metricPriority === currentPriority) {
+        const currentDate = current.recordedAt || current.startedAt;
+        const currentTime = currentDate instanceof Date ? currentDate.getTime() : 0;
+        if (recordTime > currentTime) {
+          shouldUpdate = true;
+        } else if (recordTime === currentTime && playerLower < current.playerLower) {
+          shouldUpdate = true;
+        }
+      }
+    }
+
+    if (shouldUpdate) {
+      const isBot = extractIsBot(entry);
+      targetMap.set(key, {
+        player,
+        playerLower,
+        value: metric.value,
+        metricType: metric.type || 'value',
+        map,
+        mapKey,
+        modeKey,
+        matchId,
+        startedAt,
+        recordedAt,
+        isBot
+      });
+    }
+  }
+}
+
+function escapeHtml(value) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function canonicalMode(mode) {
+  // Returns a known gt_* key from MODE_CONFIG_MAP, or null for unrecognised modes.
+  // Never falls back to 'gt_elimination' — callers must handle null explicitly
+  // so that unknown matches don't pollute the Elimination leaderboard.
+  if (typeof mode !== 'string') {
+    return null;
+  }
+  const trimmed = mode.trim();
+  if (!trimmed) {
+    return null;
+  }
+  let normalized = trimmed.toLowerCase().replace(/[\s-]+/g, '_');
+  if (!normalized.startsWith('gt_')) {
+    normalized = `gt_${normalized}`;
+  }
+  if (MODE_CONFIG_MAP.has(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+function humanizeMode(mode) {
+  const translations = MODE_TRANSLATIONS[state.language] || {};
+  if (typeof mode !== 'string' || !mode.trim()) {
+    return t('mode.unknown');
+  }
+  const trimmed = mode.trim();
+  const canonical = canonicalMode(trimmed);
+  if (canonical !== null && Object.prototype.hasOwnProperty.call(translations, canonical)) {
+    return translations[canonical];
+  }
+  // Unknown mode: strip gt_ prefix and title-case the remainder for display.
+  const withoutPrefix = trimmed.replace(/^GT[_\-\s]?/i, '');
+  const normalized = withoutPrefix.replace(/[_\-]+/g, ' ').toLowerCase();
+  const locale = getLocale();
+  return normalized.replace(/(^|\s)([\p{L}])/gu, (match, prefix, char) => prefix + char.toLocaleUpperCase(locale));
+}
+
+function isReasonableRaceTime(seconds) {
+  return Number.isFinite(seconds) && seconds > 0 && seconds < MAX_REASONABLE_TIME;
+}
+
+function parseTimeToSeconds(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'number') {
+    const abs = Math.abs(value);
+    if (!Number.isFinite(abs) || abs === 0) {
+      return null;
+    }
+    if (abs < MAX_REASONABLE_TIME) {
+      return abs;
+    }
+    if (abs >= 600 && abs < MAX_REASONABLE_TIME * 1000) {
+      return abs / 1000;
+    }
+    if (abs >= 600 && abs < MAX_REASONABLE_TIME * 1_000_000) {
+      return abs / 1_000_000;
+    }
+    return null;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') {
+      return null;
+    }
+    const normalized = trimmed.replace(',', '.');
+    const numeric = Number(normalized);
+    if (!Number.isNaN(numeric)) {
+      return parseTimeToSeconds(numeric);
+    }
+    const msMatch = normalized.match(/^([0-9]+(?:\.[0-9]+)?)\s*ms$/i);
+    if (msMatch) {
+      return parseFloat(msMatch[1]) / 1000;
+    }
+    const secMatch = normalized.match(/^([0-9]+(?:\.[0-9]+)?)\s*s$/i);
+    if (secMatch) {
+      return parseFloat(secMatch[1]);
+    }
+    const minuteMatch = normalized.match(/^([0-9]+)\s*m(?:in)?\s*([0-9]+(?:\.[0-9]+)?)\s*s$/i);
+    if (minuteMatch) {
+      return Number(minuteMatch[1]) * 60 + Number(minuteMatch[2]);
+    }
+    const isoMatch = normalized.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$/i);
+    if (isoMatch) {
+      const hours = isoMatch[1] ? Number(isoMatch[1]) : 0;
+      const minutes = isoMatch[2] ? Number(isoMatch[2]) : 0;
+      const seconds = isoMatch[3] ? Number(isoMatch[3]) : 0;
+      return hours * 3600 + minutes * 60 + seconds;
+    }
+    const colonMatch = normalized.match(/^(\d+):(\d{2})(?::(\d{2}))?(?:\.(\d+))?$/);
+    if (colonMatch) {
+      const first = Number(colonMatch[1]);
+      const second = Number(colonMatch[2]);
+      const third = colonMatch[3] !== undefined ? Number(colonMatch[3]) : null;
+      const fraction = colonMatch[4] ? Number(`0.${colonMatch[4]}`) : 0;
+      if (third !== null) {
+        return first * 3600 + second * 60 + third + fraction;
+      }
+      return first * 60 + second + fraction;
+    }
+    const simpleMinuteMatch = normalized.match(/^([0-9]+)m(?:in)?$/i);
+    if (simpleMinuteMatch) {
+      return Number(simpleMinuteMatch[1]) * 60;
+    }
+    return null;
+  }
+  return null;
+}
+
+function findBestTime(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+  let best = null;
+  for (const path of TIME_PATH_CANDIDATES) {
+    const candidate = valueAtPath(entry, path);
+    const seconds = parseTimeToSeconds(candidate);
+    if (seconds !== null && isReasonableRaceTime(seconds)) {
+      if (best === null || seconds < best) {
+        best = seconds;
+      }
+    }
+  }
+  if (best !== null) {
+    return best;
+  }
+  const visited = new Set();
+  function walk(node, hint = '') {
+    if (node === null || node === undefined) {
+      return;
+    }
+    if (typeof node === 'number' || typeof node === 'string') {
+      const keyHint = String(hint).toLowerCase();
+      if (keyHint.includes('time') || keyHint.includes('lap') || keyHint.includes('duration')) {
+        const seconds = parseTimeToSeconds(node);
+        if (seconds !== null && isReasonableRaceTime(seconds)) {
+          if (best === null || seconds < best) {
+            best = seconds;
+          }
+        }
+      }
+      return;
+    }
+    if (typeof node === 'object') {
+      if (visited.has(node)) {
+        return;
+      }
+      visited.add(node);
+      if (Array.isArray(node)) {
+        for (const item of node) {
+          walk(item, hint);
+        }
+        return;
+      }
+      for (const [key, value] of Object.entries(node)) {
+        walk(value, key);
+      }
+    }
+  }
+  walk(entry, '');
+  return best;
+}
+
+function extractLeaderboardPlayer(entry) {
+  if (entry === null || entry === undefined) {
+    return '';
+  }
+  if (typeof entry === 'string') {
+    return entry.trim();
+  }
+  if (typeof entry !== 'object') {
+    return '';
+  }
+  const name = firstString(entry, PLAYER_PATH_CANDIDATES);
+  if (name) {
+    return name;
+  }
+  if (entry.stats && typeof entry.stats === 'object') {
+    return firstString(entry.stats, PLAYER_PATH_CANDIDATES);
+  }
+  if (entry.result && typeof entry.result === 'object') {
+    return firstString(entry.result, PLAYER_PATH_CANDIDATES);
+  }
+  return '';
+}
+
+function normalizeVehicleName(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  const text = String(value).trim();
+  if (text === '') {
+    return '';
+  }
+  const slashIndex = text.indexOf('/');
+  const base = (slashIndex === -1 ? text : text.slice(0, slashIndex)).trim();
+  if (base === '') {
+    return '';
+  }
+  const lower = base.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+function extractVehicle(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return '';
+  }
+  const vehicle = normalizeVehicleName(firstString(entry, VEHICLE_PATH_CANDIDATES));
+  if (vehicle) {
+    return vehicle;
+  }
+  if (entry.stats && typeof entry.stats === 'object') {
+    const statsVehicle = normalizeVehicleName(firstString(entry.stats, VEHICLE_PATH_CANDIDATES));
+    if (statsVehicle) {
+      return statsVehicle;
+    }
+  }
+  if (entry.result && typeof entry.result === 'object') {
+    return normalizeVehicleName(firstString(entry.result, VEHICLE_PATH_CANDIDATES));
+  }
+  return '';
+}
+
+function extractIsBot(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return false;
+  }
+  for (const path of BOT_PATH_CANDIDATES) {
+    const value = valueAtPath(entry, path);
+    const interpreted = interpretBoolean(value);
+    if (interpreted !== null) {
+      return interpreted;
+    }
+  }
+  return false;
+}
+
+function formatSeconds(seconds) {
+  if (!Number.isFinite(seconds)) {
+    return '–';
+  }
+  const totalMilliseconds = Math.round(seconds * 1000);
+  const hours = Math.floor(totalMilliseconds / 3_600_000);
+  const minutes = Math.floor((totalMilliseconds % 3_600_000) / 60_000);
+  const secs = Math.floor((totalMilliseconds % 60_000) / 1000);
+  const millis = totalMilliseconds % 1000;
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`;
+  }
+  return `${minutes}:${secs.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`;
+}
+
+function extractKillDeath(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return { kills: null, deaths: null };
+  }
+  let kills = numericAtPaths(entry, KILL_PATH_CANDIDATES);
+  let deaths = numericAtPaths(entry, DEATH_PATH_CANDIDATES);
+  if (kills === null) {
+    kills = searchNumericByKeywords(entry, ['kill', 'frag']);
+  }
+  if (deaths === null) {
+    deaths = searchNumericByKeywords(entry, ['death']);
+  }
+  if (kills === null && deaths === null) {
+    return { kills: null, deaths: null };
+  }
+  const safeKills = Math.max(0, kills ?? 0);
+  const safeDeaths = Math.max(0, deaths ?? 0);
+  return { kills: safeKills, deaths: safeDeaths };
+}
+
+function priorityIndex(type, priority) {
+  const index = priority.indexOf(type);
+  return index === -1 ? priority.length : index;
+}
+
+function extractObjectiveMetric(entry, modeKey, context = null) {
+  if (!entry || typeof entry !== 'object') {
+    return { value: null, type: null };
+  }
+  if (modeKey === 'gt_elimination') {
+    const winsDefinition = OBJECTIVE_METRIC_DEFINITIONS.wins;
+    let value = null;
+    if (winsDefinition && winsDefinition.paths) {
+      value = numericAtPaths(entry, winsDefinition.paths);
+    }
+    if (value === null) {
+      value = searchNumericByKeywords(entry, ['win', 'won', 'victor']);
+    }
+    if (value === null) {
+      value = deriveEliminationWins(entry, context);
+    }
+    if (value !== null) {
+      return { value: Math.max(0, value), type: 'wins' };
+    }
+    const fallbackPriority = (OBJECTIVE_MODE_PRIORITY[modeKey] || OBJECTIVE_DEFAULT_PRIORITY).filter(
+      (type) => type !== 'wins'
+    );
+    for (const type of fallbackPriority) {
+      const definition = OBJECTIVE_METRIC_DEFINITIONS[type];
+      if (!definition) {
+        continue;
+      }
+      let fallbackValue = null;
+      if (definition.paths) {
+        fallbackValue = numericAtPaths(entry, definition.paths);
+      }
+      if (fallbackValue === null && definition.keywords) {
+        fallbackValue = searchNumericByKeywords(entry, definition.keywords);
+      }
+      if (fallbackValue !== null) {
+        return { value: Math.max(0, fallbackValue), type };
+      }
+    }
+    return { value: null, type: null };
+  }
+  const priority = OBJECTIVE_MODE_PRIORITY[modeKey] || OBJECTIVE_DEFAULT_PRIORITY;
+  for (const type of priority) {
+    const definition = OBJECTIVE_METRIC_DEFINITIONS[type];
+    if (!definition) {
+      continue;
+    }
+    let value = null;
+    if (definition.paths) {
+      value = numericAtPaths(entry, definition.paths);
+    }
+    if (value === null && definition.keywords) {
+      value = searchNumericByKeywords(entry, definition.keywords);
+    }
+    if (value !== null) {
+      return { value: Math.max(0, value), type };
+    }
+  }
+  return { value: null, type: null };
+}
+
+function deriveEliminationWins(entry, context = null) {
+  const rosterFromContext = normalizePositiveInteger(context && context.rosterSize);
+  const contextPosition = normalizePositiveInteger(context && context.position);
+  const ordinalPosition = normalizePositiveInteger(context && context.ordinalPosition);
+  const entryPosition = contextPosition ?? extractEliminationPosition(entry);
+  const basePosition = entryPosition ?? ordinalPosition ?? null;
+  const rosterFromEntry = normalizePositiveInteger(numericAtPaths(entry, ELIMINATION_ROSTER_PATHS));
+  const effectiveRoster = rosterFromContext ?? rosterFromEntry ?? null;
+  if (effectiveRoster && basePosition) {
+    return Math.max(0, effectiveRoster - basePosition + 1);
+  }
+  const remainingPlayers = normalizePositiveInteger(numericAtPaths(entry, ELIMINATION_REMAINING_PATHS));
+  if (effectiveRoster && remainingPlayers) {
+    return Math.max(0, effectiveRoster - remainingPlayers + 1);
+  }
+  if (remainingPlayers !== null) {
+    return Math.max(0, 1000 - remainingPlayers);
+  }
+  if (basePosition !== null) {
+    return Math.max(0, 1000 - basePosition);
+  }
+  return null;
+}
+
+function extractEliminationPosition(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+  const position = numericAtPaths(entry, ELIMINATION_POSITION_PATHS);
+  return normalizePositiveInteger(position);
+}
+
+function valueAtPath(obj, path) {
+  const parts = path.split('.');
+  let current = obj;
+  for (const part of parts) {
+    if (current && Object.prototype.hasOwnProperty.call(current, part)) {
+      current = current[part];
+    } else {
+      return undefined;
+    }
+  }
+  return current;
+}
+
+function firstString(obj, paths) {
+  for (const path of paths) {
+    const value = valueAtPath(obj, path);
+    if (typeof value === 'string' && value.trim() !== '') {
+      return value.trim();
+    }
+  }
+  return '';
+}
+
+function firstNumber(obj, paths) {
+  for (const path of paths) {
+    const value = valueAtPath(obj, path);
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) {
+      return Number(value);
+    }
+  }
+  return null;
+}
+
+function pickArray(obj, paths) {
+  for (const path of paths) {
+    const value = valueAtPath(obj, path);
+    if (Array.isArray(value)) {
+      return value;
+    }
+  }
+  return [];
+}
+
+function parseNumericValue(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().replace(',', '.');
+    if (normalized === '') {
+      return null;
+    }
+    const numeric = Number(normalized);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+  return null;
+}
+
+function normalizePositiveInteger(value) {
+  if (typeof value === 'string') {
+    const numeric = parseNumericValue(value);
+    if (numeric === null) {
+      return null;
+    }
+    value = numeric;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+  const integer = Math.floor(value);
+  return integer > 0 ? integer : null;
+}
+
+function interpretBoolean(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value !== 0 : null;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    if (
+      normalized === '1' ||
+      normalized === 'true' ||
+      normalized === 'yes' ||
+      normalized === 'y' ||
+      normalized === 'ja' ||
+      normalized === 'bot' ||
+      normalized === 'ai' ||
+      normalized === 'cpu' ||
+      normalized === 'computer' ||
+      normalized === 'on' ||
+      normalized === 't'
+    ) {
+      return true;
+    }
+    if (
+      normalized === '0' ||
+      normalized === 'false' ||
+      normalized === 'no' ||
+      normalized === 'n' ||
+      normalized === 'nein' ||
+      normalized === 'human' ||
+      normalized === 'player' ||
+      normalized === 'real' ||
+      normalized === 'off' ||
+      normalized === 'f'
+    ) {
+      return false;
+    }
+  }
+  return null;
+}
+
+function numericAtPaths(obj, paths) {
+  for (const path of paths) {
+    const value = valueAtPath(obj, path);
+    const numeric = parseNumericValue(value);
+    if (numeric !== null) {
+      return numeric;
+    }
+  }
+  return null;
+}
+
+function searchNumericByKeywords(node, keywords, visited = new Set()) {
+  if (node === null || node === undefined) {
+    return null;
+  }
+  if (typeof node !== 'object') {
+    return null;
+  }
+  if (visited.has(node)) {
+    return null;
+  }
+  visited.add(node);
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const result = searchNumericByKeywords(item, keywords, visited);
+      if (result !== null) {
+        return result;
+      }
+    }
+    return null;
+  }
+  for (const [key, value] of Object.entries(node)) {
+    const lowerKey = key.toLowerCase();
+    if (keywords.some((keyword) => lowerKey.includes(keyword))) {
+      const numeric = parseNumericValue(value);
+      if (numeric !== null) {
+        return numeric;
+      }
+    }
+    const nested = searchNumericByKeywords(value, keywords, visited);
+    if (nested !== null) {
+      return nested;
+    }
+  }
+  return null;
+}
+
+function searchStringByKeywords(node, keywords, visited = new Set()) {
+  if (node === null || node === undefined) {
+    return '';
+  }
+  if (typeof node === 'string') {
+    return node.trim();
+  }
+  if (typeof node !== 'object') {
+    return '';
+  }
+  if (visited.has(node)) {
+    return '';
+  }
+  visited.add(node);
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const found = searchStringByKeywords(item, keywords, visited);
+      if (found) {
+        return found;
+      }
+    }
+    return '';
+  }
+  for (const [key, value] of Object.entries(node)) {
+    const lowerKey = key.toLowerCase();
+    if (keywords.some((keyword) => lowerKey.includes(keyword))) {
+      if (typeof value === 'string' && value.trim() !== '') {
+        return value.trim();
+      }
+    }
+    const nested = searchStringByKeywords(value, keywords, visited);
+    if (nested) {
+      return nested;
+    }
+  }
+  return '';
+}
+
+function extractMode(match) {
+  return firstString(match, [
+    'mode',
+    'match.mode',
+    'gameMode',
+    'game_type',
+    'type'
+  ]) || '__unknown__';
+}
+
+function extractMap(match) {
+  return firstString(match, [
+    'map',
+    'mapName',
+    'match.map',
+    'metadata.map',
+    'level',
+    'settings.map',
+    'info.map'
+  ]) || '–';
+}
+
+function extractScoreboardEntries(match) {
+  const entries = [];
+  const seen = new Set();
+  for (const path of SCOREBOARD_PATHS) {
+    const value = valueAtPath(match, path);
+    if (!Array.isArray(value) || value.length === 0) {
+      continue;
+    }
+    for (const item of value) {
+      if (item && typeof item === 'object') {
+        if (seen.has(item)) {
+          continue;
+        }
+        seen.add(item);
+      }
+      entries.push(item);
+    }
+  }
+  return entries;
+}
+
+function extractStart(match) {
+  const candidate = firstString(match, [
+    'startTime',
+    'match.startTime',
+    'startedAt',
+    'match.startedAt',
+    'serverStartTime',
+    'start',
+    'matchStart',
+    'info.started',
+    'receivedAt'
+  ]);
+  const numeric = firstNumber(match, [
+    'startTimestamp',
+    'startedAtUnix',
+    'timestamps.start',
+    'match.startTimestamp'
+  ]);
+  return parseDate(candidate || numeric || match.receivedAt || null);
+}
+
+function extractMatchId(match) {
+  const id = firstString(match, [
+    'matchId',
+    'id',
+    'match.id',
+    'identifier',
+    'metadata.id'
+  ]);
+  return id || t('common.unknown');
+}
+
+function extractRecordedAtFromMatchId(matchId) {
+  if (typeof matchId !== 'string') {
+    return null;
+  }
+  const digits = matchId.replace(/\D+/g, '');
+  if (digits.length < 12) {
+    return null;
+  }
+  const year = Number(digits.slice(0, 4));
+  const month = Number(digits.slice(4, 6)) - 1;
+  const day = Number(digits.slice(6, 8));
+  const hour = Number(digits.slice(8, 10));
+  const minute = Number(digits.slice(10, 12));
+  const second = digits.length >= 14 ? Number(digits.slice(12, 14)) : 0;
+  if (
+    [year, month, day, hour, minute, second].some((part) => Number.isNaN(part)) ||
+    month < 0 || month > 11 ||
+    day < 1 || day > 31 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59
+  ) {
+    return null;
+  }
+  const candidate = new Date(year, month, day, hour, minute, second);
+  return Number.isNaN(candidate.getTime()) ? null : candidate;
+}
+
+function extractPlayers(match) {
+  const candidates = pickArray(match, [
+    'players',
+    'match.players',
+    'participants',
+    'scoreboard',
+    'results',
+    'leaderboard'
+  ]);
+  if (!candidates.length) {
+    return [];
+  }
+  return candidates
+    .map((entry) => {
+      if (typeof entry === 'string') {
+        return entry.trim();
+      }
+      if (entry && typeof entry === 'object') {
+        const name = firstString(entry, PLAYER_PATH_CANDIDATES);
+        if (name) {
+          return name;
+        }
+        return searchStringByKeywords(entry, ['name', 'player', 'driver']);
+      }
+      return '';
+    })
+    .filter(Boolean);
+}
+
+function parseDate(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const date = new Date(value * (value > 1_000_000_000 ? 1 : 1000));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const numeric = Number(trimmed);
+    if (!Number.isNaN(numeric)) {
+      return parseDate(numeric);
+    }
+    const parsed = new Date(trimmed);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return null;
+}
+
+// ── Overlay helpers ──────────────────────────────────────────────────────────
+const RANK_NAMES = [
+  'Rookie Driver','Street Newbie','Weekend Racer','Track Learner','Amateur Racer',
+  'Street Racer','Semi-Pro Driver','Pro Racer','Elite Driver','Track Dominator',
+  'Master of Speed','Racing Legend','Asphalt King','Grand Champion','Q3Rally Icon'
+];
+const ACHIEVEMENT_NAMES = [
+  'Distance Driven','Kills','Races Won','Sprint Wins','Flags Captured',
+  'Flag Assists','Fuel Consumed','Accuracy','Excellent','Impressive','Perfect'
+];
+const ACHIEVEMENT_MAX_TIERS = 8;
+
+function createOverlay(content, title) {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'q3-overlay-backdrop';
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) backdrop.remove(); });
+
+  const box = document.createElement('div');
+  box.className = 'q3-overlay';
+
+  // Header: close button only — no title here
+  const header = document.createElement('div');
+  header.className = 'q3-overlay-header';
+  const close = document.createElement('button');
+  close.className = 'q3-overlay-close';
+  close.textContent = '✕ Close';
+  close.addEventListener('click', () => backdrop.remove());
+  header.appendChild(close);
+
+  const body = document.createElement('div');
+  body.className = 'q3-overlay-body';
+
+  // Title goes into the body as the first element, before the caller's content
+  if (title) {
+    const titleEl = document.createElement('div');
+    titleEl.className = 'q3-overlay-title';
+    titleEl.textContent = title;
+    body.appendChild(titleEl);
+  }
+
+  body.appendChild(content);
+
+  box.appendChild(header);
+  box.appendChild(body);
+  backdrop.appendChild(box);
+  document.body.appendChild(backdrop);
+  return backdrop;
+}
+
+function statCard(label, value) {
+  const card = document.createElement('div');
+  card.className = 'q3-stat-card';
+  card.innerHTML = `<dt>${escapeHtml(String(label))}</dt><dd>${escapeHtml(String(value))}</dd>`;
+  return card;
+}
+
+function formatMs(ms) {
+  if (!ms || ms <= 0) return '–';
+  const m = Math.floor(ms / 60000);
+  const s = ((ms % 60000) / 1000).toFixed(3);
+  return m > 0 ? `${m}:${s.padStart(6,'0')}` : `${s}s`;
+}
+
+function formatKm(km) {
+  if (!km || km <= 0) return '–';
+  return Number(km).toFixed(1) + ' km';
+}
+
+// ── Player Profile Overlay ────────────────────────────────────────────────────
+async function showPlayerProfile(playerId, playerName) {
+  const INGEST_STALE_THRESHOLD_MS = 30 * 60 * 1000;
+  const frag = document.createDocumentFragment();
+
+  const loading = document.createElement('div');
+  loading.className = 'q3-loading';
+  loading.textContent = 'Loading profile…';
+  frag.appendChild(loading);
+
+  const backdrop = createOverlay(frag, playerName || 'Player Profile');
+
+  try {
+    const resp = await fetch(`${API_BASE}/players/${encodeURIComponent(playerId)}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const p = await resp.json();
+
+    loading.remove();
+    const body = backdrop.querySelector('.q3-overlay-body');
+
+    const rankName = RANK_NAMES[p.currentRank] || `Rank ${p.currentRank}`;
+    const rankPct  = Math.round(((p.currentRank || 0) / (RANK_NAMES.length - 1)) * 100);
+
+    // Rank + Score + progress bar as a compact info strip at the top of the body
+    const rankStrip = document.createElement('div');
+    rankStrip.style.cssText = [
+      'display:flex', 'align-items:center', 'gap:16px',
+      'padding:12px 16px', 'margin-bottom:20px',
+      'background:rgba(255,255,255,0.04)',
+      'border:1px solid rgba(255,255,255,0.08)',
+      'border-radius:12px', 'flex-wrap:wrap'
+    ].join(';');
+    rankStrip.innerHTML = `
+      <div style="flex:1;min-width:160px">
+        <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:4px">Rank</div>
+        <div style="font-size:.95rem;font-weight:600;color:var(--text)">${escapeHtml(String(rankName))}</div>
+        <div class="q3-rank-bar" style="margin-top:6px">
+          <div class="q3-rank-bar-fill" style="width:${rankPct}%"></div>
+        </div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:4px">Score</div>
+        <div style="font-size:.95rem;font-weight:600;color:var(--text)">${escapeHtml((Number(p.playerScore) || 0).toLocaleString())}</div>
+      </div>`;
+    body.appendChild(rankStrip);
+
+    const ingestMatch = typeof p.lastIngestedMatchId === 'string' && p.lastIngestedMatchId
+      ? p.lastIngestedMatchId
+      : '–';
+    const ingestAtDate = p.lastIngestedAt ? new Date(p.lastIngestedAt) : null;
+    const ingestAtDisplay = ingestAtDate && !Number.isNaN(ingestAtDate.getTime())
+      ? ingestAtDate.toLocaleString()
+      : 'unbekannt';
+    const ingestMode = typeof p.lastIngestedMode === 'string' && p.lastIngestedMode
+      ? humanizeMode(p.lastIngestedMode)
+      : '';
+    const ingestSeq = Number.isFinite(Number(p.lastServerMatchSeq)) ? ` · Seq ${Number(p.lastServerMatchSeq)}` : '';
+
+    const ingestMeta = document.createElement('div');
+    ingestMeta.style.cssText = 'margin:-8px 0 16px;color:var(--text-muted);font-size:.82rem';
+    ingestMeta.textContent = `Stand: Match ${ingestMatch} um ${ingestAtDisplay}${ingestMode ? ` (${ingestMode}${ingestSeq})` : ingestSeq}`;
+    body.appendChild(ingestMeta);
+
+    if (ingestAtDate && !Number.isNaN(ingestAtDate.getTime())) {
+      const ageMs = Date.now() - ingestAtDate.getTime();
+      if (ageMs > INGEST_STALE_THRESHOLD_MS) {
+        const staleWarning = document.createElement('div');
+        staleWarning.style.cssText = 'margin:0 0 16px;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,196,0,.35);background:rgba(255,196,0,.1);color:#ffd88a;font-size:.82rem';
+        staleWarning.textContent = 'Daten möglicherweise verzögert (letzter Ingest älter als 30 Minuten).';
+        body.appendChild(staleWarning);
+      }
+    }
+
+    // Zweispaltiges Haupt-Layout
+    const layout = document.createElement('div');
+    layout.className = 'q3-profile-layout';
+    body.appendChild(layout);
+
+    // ── Linke Spalte: Career Stats ──────────────────────────────
+    const colLeft = document.createElement('div');
+
+    const statsH = document.createElement('h3');
+    statsH.textContent = 'Career Stats';
+    colLeft.appendChild(statsH);
+
+    const grid = document.createElement('div');
+    grid.className = 'q3-stat-grid';
+    const kd = (p.deaths || 0) > 0 ? ((p.kills || 0) / p.deaths).toFixed(2) : (p.kills || 0);
+    grid.appendChild(statCard('Wins', p.wins || 0));
+    grid.appendChild(statCard('Losses', p.losses || 0));
+    grid.appendChild(statCard('Kills', p.kills || 0));
+    grid.appendChild(statCard('Deaths', p.deaths || 0));
+    grid.appendChild(statCard('K/D', kd));
+    grid.appendChild(statCard('Games Played', p.gamesPlayed || 0));
+    grid.appendChild(statCard('Best Lap', formatMs(p.bestLapMs)));
+    grid.appendChild(statCard('Distance', formatKm(p.distanceKm)));
+    grid.appendChild(statCard('Top Speed', p.topSpeedKph ? p.topSpeedKph.toFixed(1) + ' km/h' : '–'));
+    grid.appendChild(statCard('Fuel Used', p.fuelUsed ? p.fuelUsed.toFixed(1) + ' L' : '–'));
+    grid.appendChild(statCard('Flag Captures', p.flagCaptures || 0));
+    grid.appendChild(statCard('Flag Assists', p.flagAssists || 0));
+    grid.appendChild(statCard('Accuracy Awards', p.accuracyAwards || 0));
+    grid.appendChild(statCard('Excellent', p.excellentAwards || 0));
+    grid.appendChild(statCard('Impressive', p.impressiveAwards || 0));
+    grid.appendChild(statCard('Perfect', p.perfectAwards || 0));
+    grid.appendChild(statCard('Damage Dealt', p.damageDealt || 0));
+    grid.appendChild(statCard('Damage Taken', p.damageTaken || 0));
+    grid.appendChild(statCard('Most Used', p.mostUsedVehicle || '–'));
+    colLeft.appendChild(grid);
+    layout.appendChild(colLeft);
+
+    // ── Rechte Spalte: Mode Stats ───────────────────────────────────────
+    const colRight = document.createElement('div');
+
+    const modeGroups = [
+      { title: 'Deathmatch',      primaryStat: 'dmCompleted', fields: [['Wins','dmWins'],['Completed','dmCompleted'],['Kills','dmKills']] },
+      { title: 'Derby',           primaryStat: 'derbyCompleted', fields: [['Wins','derbyWins'],['Completed','derbyCompleted'],['Kills','derbyKills']] },
+      { title: 'Racing',          primaryStat: 'racingCompleted', alwaysVisibleWhenTracked: true, fields: [['Wins','racingWins'],['Podiums','racingPodiums'],['Completed','racingCompleted'],['Total Time',null,'racingTotalMs']] },
+      { title: 'Racing DM',       primaryStat: 'racingDmCompleted', alwaysVisibleWhenTracked: true, fields: [['Wins','racingDmWins'],['Podiums','racingDmPodiums'],['Completed','racingDmCompleted']] },
+      { title: 'Sprint',          primaryStat: 'sprintCompleted', alwaysVisibleWhenTracked: true, fields: [['Wins','sprintWins'],['Completed','sprintCompleted'],['Best Time',null,'sprintBestMs']] },
+      { title: 'Elimination',     primaryStat: 'eliminationCompleted', fields: [['Wins','eliminationWins'],['Completed','eliminationCompleted'],['Rounds Lasted','eliminationTotalRoundsLasted']] },
+      { title: 'LCS',             primaryStat: 'lcsCompleted', fields: [['Wins','lcsWins'],['Completed','lcsCompleted'],['Survival Time',null,'lcsTotalSurvivalMs']] },
+      { title: 'CTF',             primaryStat: 'ctfCompleted', fields: [['Wins','ctfWins'],['Completed','ctfCompleted'],['Captures','ctfCaptures']] },
+      { title: 'CTF 4-Team',      primaryStat: 'ctf4Completed', fields: [['Wins','ctf4Wins'],['Completed','ctf4Completed'],['Captures','ctf4Captures']] },
+      { title: 'Team DM',         primaryStat: 'teamCompleted', fields: [['Wins','teamWins'],['Completed','teamCompleted'],['Kills','teamKills']] },
+      { title: 'Team Racing',     primaryStat: 'teamRacingCompleted', alwaysVisibleWhenTracked: true, fields: [['Wins','teamRacingWins'],['Completed','teamRacingCompleted'],['Podiums','teamRacingPodiums']] },
+      { title: 'Team Racing DM',  primaryStat: 'teamRacingDmCompleted', alwaysVisibleWhenTracked: true, fields: [['Wins','teamRacingDmWins'],['Completed','teamRacingDmCompleted'],['Podiums','teamRacingDmPodiums']] },
+      { title: 'Domination',      primaryStat: 'dominationCompleted', fields: [['Wins','dominationWins'],['Completed','dominationCompleted'],['Zone Hold',null,'dominationZoneHoldMs']] },
+      { title: 'King of the Hill', primaryStat: 'kothCompleted', fields: [['Wins','kothWins'],['Completed','kothCompleted'],['Zone Hold',null,'kothZoneHoldMs']] },
+      { title: 'Autoball',        primaryStat: 'autoballCompleted', fields: [['Wins','autoballWins'],['Completed','autoballCompleted'],['Goals','autoballGoals']] },
+    ];
+
+    const hasTrackedField = (obj, field) => Object.prototype.hasOwnProperty.call(obj || {}, field);
+    const toIntStat = (obj, field) => {
+      const num = Number(obj?.[field]);
+      return Number.isFinite(num) ? num : 0;
+    };
+
+    const activeModes = modeGroups.filter(g => {
+      const primaryActive = g.primaryStat ? toIntStat(p, g.primaryStat) > 0 : false;
+      if (primaryActive) {
+        return true;
+      }
+      const hasAnyPositiveField = g.fields.some(([,key,msKey]) => (key && toIntStat(p, key) > 0) || (msKey && toIntStat(p, msKey) > 0));
+      if (hasAnyPositiveField) {
+        return true;
+      }
+      if (g.alwaysVisibleWhenTracked) {
+        if (g.primaryStat && hasTrackedField(p, g.primaryStat)) {
+          return true;
+        }
+        return g.fields.some(([,key,msKey]) => (key && hasTrackedField(p, key)) || (msKey && hasTrackedField(p, msKey)));
+      }
+      return false;
+    });
+
+    if (activeModes.length > 0) {
+      const modeH = document.createElement('h3');
+      modeH.textContent = 'Mode Stats';
+      modeH.style.marginTop = '0';
+      colRight.appendChild(modeH);
+
+      activeModes.forEach(group => {
+        const groupH = document.createElement('div');
+        groupH.style.cssText = 'font-size:.8rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin:12px 0 6px';
+        groupH.textContent = group.title;
+        colRight.appendChild(groupH);
+
+        const modeGrid = document.createElement('div');
+        modeGrid.className = 'q3-stat-grid';
+        group.fields.forEach(([label, key, msKey]) => {
+          let val;
+          if (msKey) {
+            const ms = toIntStat(p, msKey);
+            val = ms > 0 ? formatMs(ms) : '–';
+          } else {
+            val = String(toIntStat(p, key));
+          }
+          modeGrid.appendChild(statCard(label, val));
+        });
+        colRight.appendChild(modeGrid);
+      });
+    } else {
+      // Platzhalter wenn noch keine Mode Stats
+      colRight.innerHTML = '<h3 style="margin-top:0">Mode Stats</h3><div style="color:var(--text-muted);font-size:.85rem;padding:12px 0">Play matches to unlock mode stats.</div>';
+    }
+    layout.appendChild(colRight);
+
+    // ── Volle Breite: Achievements ──────────────────────────────────────
+    if (Array.isArray(p.achievementTiers) && p.achievementTiers.length > 0) {
+      const achvWrap = document.createElement('div');
+      achvWrap.className = 'q3-profile-layout-full';
+
+      const achvH = document.createElement('h3');
+      achvH.textContent = 'Achievements';
+      achvWrap.appendChild(achvH);
+
+      const achvGrid = document.createElement('div');
+      achvGrid.className = 'q3-achievements';
+      p.achievementTiers.forEach((tiers, i) => {
+        const name = ACHIEVEMENT_NAMES[i] || `Category ${i}`;
+        const pct = Math.round((tiers / ACHIEVEMENT_MAX_TIERS) * 100);
+        const div = document.createElement('div');
+        div.className = 'q3-achv' + (tiers > 0 ? ' unlocked' : '');
+        div.innerHTML = `
+          <div class="q3-achv-name">${escapeHtml(String(name))}</div>
+          <div class="q3-achv-tier">${tiers > 0 ? `Tier ${escapeHtml(String(tiers))} / ${ACHIEVEMENT_MAX_TIERS}` : 'Locked'}</div>
+          <div class="q3-achv-progress">
+            <div class="q3-achv-progress-fill" style="width:${Number.isFinite(pct) ? pct : 0}%"></div>
+          </div>`;
+        achvGrid.appendChild(div);
+      });
+      achvWrap.appendChild(achvGrid);
+      layout.appendChild(achvWrap);
+    }
+
+  } catch (err) {
+    loading.innerHTML = `<div style="text-align:center;padding:32px 16px">
+      <div style="font-size:2.5rem;margin-bottom:16px">🏎️</div>
+      <div style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:10px">Coming in v0.8</div>
+      <div style="font-size:.88rem;color:var(--text-muted);line-height:1.6;max-width:340px;margin:0 auto">
+        Full player profile tracking will be available in <strong style="color:var(--accent)">Q3Rally v0.8</strong>.
+      </div>
+    </div>`;
+  }
+}
+
+// ── Match Details Overlay ─────────────────────────────────────────────────────
+async function showMatchDetails(matchId) {
+  const frag = document.createDocumentFragment();
+
+  const loading = document.createElement('div');
+  loading.className = 'q3-loading';
+  loading.textContent = 'Loading match…';
+  frag.appendChild(loading);
+
+  const backdrop = createOverlay(frag, 'Match Details');
+
+  try {
+    const resp = await fetch(`${API_BASE}/matches/${encodeURIComponent(matchId)}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const m = await resp.json();
+
+    loading.remove();
+    const box    = backdrop.querySelector('.q3-overlay');
+    const body   = backdrop.querySelector('.q3-overlay-body');
+    const header = backdrop.querySelector('.q3-overlay-header');
+
+    // Header stays "Match Details" — mode + map go into the body as a title
+    const rawMode = m.mode || '';
+    const rawMap  = m.map  || '';
+    const date    = m.startTime ? new Date(m.startTime).toLocaleString() : '–';
+    const server  = m.server?.name || '–';
+
+    const displayMode = rawMode ? humanizeMode(rawMode) : '–';
+    const displayMap  = rawMap  ? humanizeMapName(rawMap) : '–';
+
+    // Mode · Map heading inside the body
+    const matchTitle = document.createElement('div');
+    matchTitle.style.cssText = 'margin-bottom:6px';
+    matchTitle.innerHTML = `
+      <div style="font-size:1.1rem;font-weight:700;color:var(--text)">${escapeHtml(String(displayMode))}</div>
+      <div style="font-size:.88rem;color:var(--text-muted);margin-top:2px">${escapeHtml(String(displayMap))}</div>`;
+    body.appendChild(matchTitle);
+
+    // Meta row: date, server, ID
+    const meta = document.createElement('div');
+    meta.style.cssText = 'font-size:.82rem;color:var(--text-muted);margin-bottom:20px;margin-top:10px;display:flex;gap:16px;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid rgba(255,255,255,0.07)';
+    meta.innerHTML = `<span>📅 ${escapeHtml(String(date))}</span><span>🖥 ${escapeHtml(String(server))}</span><span>🆔 ${escapeHtml(String(matchId))}</span>`;
+    body.appendChild(meta);
+
+    // Players
+    const players = Array.isArray(m.players) ? m.players : [];
+    if (players.length > 0) {
+      const ph = document.createElement('h3');
+      ph.textContent = `Players (${players.length})`;
+      body.appendChild(ph);
+
+      const list = document.createElement('div');
+      list.className = 'q3-match-players';
+
+      const sorted = [...players].sort((a, b) => (a.position || 99) - (b.position || 99));
+      sorted.forEach((p) => {
+        const name = p.cleanName || p.name || 'Unknown';
+        const pos  = p.position || '–';
+        const stats = [];
+        if (p.bestLapMs > 0) stats.push(`Best: ${formatMs(p.bestLapMs)}`);
+        if (p.totalRaceMs > 0) stats.push(`Total: ${formatMs(p.totalRaceMs)}`);
+        if (p.kills != null) stats.push(`K: ${p.kills}`);
+        if (p.deaths != null) stats.push(`D: ${p.deaths}`);
+        if (p.captures > 0) stats.push(`Caps: ${p.captures}`);
+        if (p.score != null) stats.push(`Score: ${p.score}`);
+
+        const row = document.createElement('div');
+        row.className = 'q3-match-player';
+        row.innerHTML = `
+          <span class="pos">${escapeHtml(String(pos))}</span>
+          <span class="pname">${escapeHtml(String(name))}${p.isBot ? ' <span class="bot-tag">Bot</span>' : ''}</span>
+          <span class="pstats">${escapeHtml(stats.join(' · ') || '–')}</span>`;
+
+        if (p.playerId && !p.isBot) {
+          row.querySelector('.pname').style.cursor = 'pointer';
+          row.querySelector('.pname').title = 'View profile';
+          row.querySelector('.pname').addEventListener('click', () => {
+            backdrop.remove();
+            showPlayerProfile(p.playerId, name);
+          });
+        }
+        list.appendChild(row);
+      });
+      body.appendChild(list);
+    }
+
+  } catch (err) {
+    loading.textContent = `Could not load match: ${err.message}`;
+  }
+}
+
+// ── Theme toggle ─────────────────────────────────────────────────────────────
+(function () {
+  const html   = document.documentElement;
+  const btn    = document.getElementById('theme-toggle');
+  const stored = localStorage.getItem('q3rally_theme');
+  const theme  = stored === 'light' ? 'light' : 'dark';
+
+  function applyTheme(t) {
+    html.dataset.theme = t;
+    if (btn) btn.textContent = t === 'dark' ? '☀️' : '🌙';
+    localStorage.setItem('q3rally_theme', t);
+  }
+
+  applyTheme(theme);
+
+  if (btn) {
+    btn.addEventListener('click', () => {
+      applyTheme(html.dataset.theme === 'dark' ? 'light' : 'dark');
+    });
+  }
+})();
+
+// ── Changelog ────────────────────────────────────────────────────────────────
+const LADDER_CHANGELOG = [
+  {
+    version: '1.0.16',
+    date: '2026-10-10',
+    changes: [
+      'New mode Autoball (GT_AUTOBALL): leaderboard, team mode, per-player goals/assists/saves/shots/demolitions, career card (wins, completed, goals)',
+      'Fix: per-mode career counters (wins, completed, podiums, totals, awards) no longer run one match ahead for the local player – a snapshot that is ahead already contains the match and is taken as-is'
+    ],
+  },
+  {
+    version: '1.0.15',
+    date: '2026-10-04',
+    changes: [
+      'Match files, the match index and profiles are written under one lock and atomically (parallel uploads lost index entries, readers could see half-written files)',
+      'Approved server keys get their own POST limit (120 per minute per key); players and unknown keys keep 30 per minute per IP; rate-limit files moved to data/private/',
+      'Ghosts: a new ghost that is slower than the slowest one in a full bucket is refused with stored:false / BUCKET_FULL instead of being stored and dropped again',
+      'Ghosts: GET /ghosts without physics/checksum lists only the current bucket (highest physics version, newest map build) instead of mixing incomparable lap times',
+      'merge_player.php --apply holds the ladder lock while merging'
+    ],
+  },
+  {
+    version: '1.0.14',
+    date: '2026-10-04',
+    changes: [
+      'Security: ladder page escapes player names, server names, modes, maps and profile values in the match and profile views (stored XSS)',
+      'Security admin.php: form tokens against cross-site requests (CSRF), new session id after login, session cookie HttpOnly + SameSite=Strict (+ Secure on HTTPS)',
+      'Security admin.php: failed logins limited (5 per IP, 30 overall per 15 minutes), no framing, no caching',
+      'admin.php shows and posts a short key id instead of the key; logout button',
+      'Leaderboard rows link the newest player id of a name (a player whose id changed opened the old profile)',
+      'New command line tool merge_player.php: moves matches, ghosts, key binding and profile of an old player id to the new one (dry run by default)',
+      'Offline keys belong to one player: the first upload binds the key to its player id; afterwards only that player is credited (other players stay in the match without profile credit, foreign ghosts are refused); admin.php shows the binding and can release it'
+    ],
+  },
+  {
+    version: '1.0.13',
+    date: '2026-10-04',
+    changes: [
+      'Security: server keys moved to data/private/ (no HTTP access), match ids can no longer name internal files',
+      'Security: POST /api/v1/register always creates a pending key request; only the reporting server may delete a match, offline keys never',
+      'Offline keys always report offline matches and ghosts; key storage is locked and written atomically'
+    ],
+  },
+  {
+    version: '1.0.12',
+    date: '2026-10-03',
+    changes: [
+      'New tab "Ghosts": fastest lap ghosts per map, track variant, vehicle and map version, with ghost download',
+      'New: GET /api/v1/ghosts/catalog lists maps, variants, map builds and vehicles that have ghosts',
+      'Fix: wide tables scroll inside their box on small screens instead of widening the page'
+    ],
+  },
+  {
+    version: '1.0.11',
+    date: '2026-10-03',
+    changes: [
+      'GET /api/v1/ghosts: perVehicle=K returns the best K ghosts per vehicle',
+      'GET /api/v1/ghosts: format=text returns a tab separated list for the game engine (Ghost Race opponents)',
+    ],
+  },
+  {
+    version: '1.0.10',
+    date: '2026-10-02',
+    changes: [
+      'New: lap ghosts – POST /api/v1/ghosts stores the best lap ghost per player, map, track variant and vehicle',
+      'New: GET /api/v1/ghosts?map=&tl=&rev=&vehicle= ranking list, GET /api/v1/ghosts/{ghostId} single ghost (?format=raw for the .ghost text)',
+      'Ghosts are grouped by physics version and map checksum; older recordings stay archived but are not ranked against current ones',
+      'Plausibility checks on uploads: lap start/finish, sample gaps, segment and average speed, driven distance vs. course length',
+      'Server keys count ghost uploads separately (ghostCount) instead of matchCount',
+    ]
+  },
+  {
+    version: '1.0.9',
+    date: '2026-04-14',
+    changes: [
+      'Fix: mergeCareerCountField no longer double-counts kills/captures when a snapshot is present – snapshot is authoritative cumulative total, delta only applied when no snapshot exists',
+      'Fix: playerScore drift resolved – local-client snapshot accepted as-is (monotone); delta derivation restricted to remote players without a snapshot',
+      'Fix: kills extraction in profile_upsert now mirrors extract_player_kills() fallback chain (kills ?? frags ?? elims ?? score), closing discrepancy for legacy payloads',
+      'Fix: eliminationTotalRoundsLasted now accumulates eliminationRound from payload instead of staying frozen at snapshot value',
+      'Fix: isReplayBySeq uses strict less-than; same serverMatchSeq after server restart no longer silently drops a match',
+      'Engine: GT_DOMINATION now populates zoneHoldMs per player – new dominationZoneHoldMs in gclient_t, accumulated in Sigil_Think, read in G_LadderPopulatePlayer',
+      'Engine: G_LadderModeForGametype returns GT_UNKNOWN for unrecognised gametypes instead of GT_ELIMINATION',
+      'Engine: G_RecordMatchOutcome() now called in LogExit() before G_Profile_FlushIfDirty() and G_LadderSubmitMatchReport() – fixes profile snapshots missing wins/ctfWins/dmWins etc. because they were serialised before the outcome was recorded',
+    ]
+  },
+  {
+    version: '1.0.8',
+    date: '2026-04-13',
+    changes: [
+      'Contract update: mode-aware player fields are now validated and normalized per game mode',
+      'New required fields by mode: racing/sprint/team-racing require raceTimeMs + bestLapMs + checkpoints; deathmatch/team/derby/lcs require kills + deaths; objective modes require objectiveScore + objectiveTimeMs; elimination also requires eliminationRound + eliminationState',
+      'Breaking change: ambiguous score-only payloads are rejected when mode-specific mandatory fields are missing',
+      'Non-breaking: deprecated aliases (lapTime, frags, captures, roundState) are still accepted but normalized to canonical keys',
+      'Migration guidance added for game server, Python ladder service, PHP webservice and dashboard consumers',
+      'Release checklist added for coordinated rollout across all services and consumers',
+    ]
+  },
+  {
+    version: '1.0.7',
+    date: '2026-04-13',
+    changes: [
+      'Ingest parser now normalizes mode-specific player fields (race/kills/zone/elimination)',
+      'Index mapping updated for score/kills/race timers/zone hold and elimination metadata',
+      'Backward-compatible payload handling: legacy aliases still accepted in degraded mode',
+      'Structured API errors with code/message/details payloads (no silent no-player drops)',
+    ]
+  },
+  {
+    version: '1.0.6',
+    date: '2026-03-30',
+    changes: [
+      'canonicalMode(): returns null for unknown game modes instead of falling back to gt_elimination',
+      'Unknown game modes counted as __unknown__ in breakdown, excluded from all leaderboards',
+      'gamesPlayed: always incremented per upload; snapshot value no longer used',
+      'Overlay layout: header contains close button only; title and match info moved into body',
+      'Profile overlay: rank and score shown as info strip in body, not in header bar',
+      'Match details: mode and map displayed as body heading via humanizeMode / humanizeMapName',
+    ]
+  },
+  {
+    version: '1.0.5',
+    date: '2026-03-27',
+    changes: [
+      'Admin: added Offline tab – keys registered via the in-game wizard are now grouped separately',
+      'Admin: added Revoked tab with permanent delete action',
+      'Admin: Offline keys can be approved/revoked directly from the Offline tab',
+      'register.php: JSON response branch for in-game registration wizard (Accept: application/json)',
+      'Engine: ladder_register command now async (non-blocking, driven by SV_LadderFrame)',
+      'Engine: sv_ladderApiKey, sv_ladderEnabled, sv_hostname set from engine code after registration',
+      'Engine: writeconfig triggered automatically on successful registration',
+      'Engine: SV_LadderFrame called before com_sv_running guard so registration works in main menu',
+    ]
+  },
+  {
+    version: '1.0.4',
+    date: '2026-03-20',
+    changes: [
+      'In-game ladder registration wizard (ui_rally_ladder_wizard)',
+      'ladder_register / ladder_register_abort console commands',
+      'Per-server API key authentication via Bearer token',
+      'Auto-suspend inactive keys after 90 days',
+      'Admin panel: approve / revoke keys',
+      'register.php: self-service server key registration',
+    ]
+  },
+  {
+    version: '1.0.3',
+    date: '2026-02-10',
+    changes: [
+      'Player profile overlay in leaderboard frontend',
+      'Achievement tier display per category',
+      'Match detail overlay',
+      'Online / Offline source toggle in leaderboard',
+    ]
+  },
+  {
+    version: '1.0.2',
+    date: '2026-01-15',
+    changes: [
+      'Leaderboard index endpoint (/matches/index) for fast frontend loads',
+      'TGA levelshot support in frontend',
+      'Map metadata from .arena files',
+      'Levelshot manifest endpoint (/maps/levelshots)',
+    ]
+  },
+  {
+    version: '1.0.1',
+    date: '2025-12-01',
+    changes: [
+      'Rate limiting per IP (30 req / 60 s)',
+      'Match spool with retry and exponential backoff',
+      'Elimination, CTF and Deathmatch leaderboard tabs',
+    ]
+  },
+  {
+    version: '1.0.0',
+    date: '2025-11-01',
+    changes: [
+      'Initial release',
+      'Match upload endpoint (POST /matches)',
+      'Basic leaderboard frontend',
+      'Race / Sprint leaderboard',
+    ]
+  }
+];
+
+function showChangelog() {
+  const frag = document.createDocumentFragment();
+  const h2 = document.createElement('h2');
+  h2.textContent = 'Q3Rally Ladder – Changelog';
+  frag.appendChild(h2);
+  LADDER_CHANGELOG.forEach((release) => {
+    const block = document.createElement('div');
+    block.style.cssText = 'margin-bottom:20px';
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:baseline;gap:12px;margin-bottom:10px';
+    header.innerHTML = '<span style="font-size:1rem;font-weight:700;color:var(--accent)">v' + release.version + '</span><span style="font-size:.8rem;color:var(--text-muted)">' + release.date + '</span>';
+    block.appendChild(header);
+    const ul = document.createElement('ul');
+    ul.style.cssText = 'margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px';
+    release.changes.forEach((change) => {
+      const li = document.createElement('li');
+      li.style.cssText = 'font-size:.88rem;color:var(--text-muted);line-height:1.5';
+      li.textContent = change;
+      ul.appendChild(li);
+    });
+    block.appendChild(ul);
+    frag.appendChild(block);
+  });
+  createOverlay(frag);
+}
+
+document.getElementById('version-badge')?.addEventListener('click', showChangelog);
+
+// ── Lap ghost rankings (tab "Ghosts") ─────────────────────────────────────────
+// Data: GET /ghosts/catalog (maps → track variants → map builds → vehicles) and
+// GET /ghosts?map=&tl=&rev=&physics=&checksum=[&vehicle=] (ranking per bucket).
+const GHOST_TAB_KEY = 'ghosts';
+const ghostState = {
+  catalog: null,
+  loading: false,
+  error: null,
+  map: '',
+  variant: '',
+  bucket: '',
+  vehicle: '',
+  lists: new Map()
+};
+
+function ghostVariantLabel(variant) {
+  const lengthKeys = ['ghosts.length.short', 'ghosts.length.medium', 'ghosts.length.long'];
+  const length = t(lengthKeys[variant.trackLength] || 'ghosts.length.medium');
+  return variant.trackReversed ? `${length} · ${t('ghosts.reversed')}` : length;
+}
+
+function ghostFindMap() {
+  return (ghostState.catalog || []).find((m) => m.map === ghostState.map) || null;
+}
+
+function ghostFindVariant() {
+  const map = ghostFindMap();
+  return map ? (map.variants.find((v) => v.variant === ghostState.variant) || null) : null;
+}
+
+function ghostFindBucket() {
+  const variant = ghostFindVariant();
+  return variant ? (variant.buckets.find((b) => b.bucket === ghostState.bucket) || null) : null;
+}
+
+function ghostFillSelect(select, options, value) {
+  select.innerHTML = '';
+  options.forEach(({ value: optionValue, label }) => {
+    const option = document.createElement('option');
+    option.value = optionValue;
+    option.textContent = label;
+    select.appendChild(option);
+  });
+  select.value = value;
+  select.disabled = options.length === 0;
+}
+
+/* Keeps map → variant → build → vehicle consistent with the catalog. */
+function ghostNormalizeSelection() {
+  const maps = ghostState.catalog || [];
+  if (!maps.some((m) => m.map === ghostState.map)) {
+    ghostState.map = maps.length ? maps[0].map : '';
+  }
+  const map = ghostFindMap();
+  const variants = map ? map.variants : [];
+  if (!variants.some((v) => v.variant === ghostState.variant)) {
+    const best = variants.slice().sort((a, b) => b.count - a.count)[0];
+    ghostState.variant = best ? best.variant : '';
+  }
+  const variant = ghostFindVariant();
+  const buckets = variant ? variant.buckets : [];
+  if (!buckets.some((b) => b.bucket === ghostState.bucket)) {
+    ghostState.bucket = buckets.length ? buckets[0].bucket : '';   // newest build first
+  }
+  const bucket = ghostFindBucket();
+  if (ghostState.vehicle && !(bucket && bucket.vehicles[ghostState.vehicle])) {
+    ghostState.vehicle = '';
+  }
+}
+
+function createGhostTab() {
+  const button = document.createElement('button');
+  button.className = 'tab-button';
+  button.type = 'button';
+  button.dataset.mode = GHOST_TAB_KEY;
+  button.id = `mode-tab-${GHOST_TAB_KEY}`;
+  button.setAttribute('role', 'tab');
+  button.setAttribute('aria-controls', `mode-panel-${GHOST_TAB_KEY}`);
+  button.setAttribute('aria-selected', 'false');
+  button.setAttribute('tabindex', '-1');
+  button.textContent = t('ghosts.tab');
+  button.addEventListener('click', () => setActiveMode(GHOST_TAB_KEY));
+
+  const panel = document.createElement('div');
+  panel.className = 'mode-panel tab-panel';
+  panel.id = `mode-panel-${GHOST_TAB_KEY}`;
+  panel.setAttribute('role', 'tabpanel');
+  panel.setAttribute('aria-labelledby', button.id);
+
+  const controls = document.createElement('div');
+  controls.className = 'mode-controls';
+  const selects = {};
+  [
+    ['map', 'ghosts.controls.map'],
+    ['variant', 'ghosts.controls.variant'],
+    ['vehicle', 'ghosts.controls.vehicle'],
+    ['bucket', 'ghosts.controls.build']
+  ].forEach(([key, labelKey]) => {
+    const wrapper = document.createElement('div');
+    const label = document.createElement('label');
+    label.setAttribute('for', `ghost-${key}`);
+    label.dataset.i18n = labelKey;
+    label.textContent = t(labelKey);
+    const select = document.createElement('select');
+    select.id = `ghost-${key}`;
+    select.disabled = true;
+    select.addEventListener('change', () => {
+      ghostState[key] = select.value;
+      ghostNormalizeSelection();
+      renderGhostPanel();
+    });
+    wrapper.appendChild(label);
+    wrapper.appendChild(select);
+    controls.appendChild(wrapper);
+    selects[key] = { wrapper, select };
+  });
+  panel.appendChild(controls);
+
+  const layout = document.createElement('div');
+  layout.className = 'mode-layout';
+  const figure = document.createElement('figure');
+  figure.className = 'mode-levelshot';
+  const shot = document.createElement('img');
+  shot.alt = '';
+  shot.loading = 'lazy';
+  shot.decoding = 'async';
+  const fallback = document.createElement('p');
+  fallback.className = 'mode-levelshot-fallback';
+  fallback.dataset.i18n = 'mode.levelshot.missing';
+  fallback.textContent = t('mode.levelshot.missing');
+  fallback.hidden = true;
+  shot.addEventListener('error', () => { shot.hidden = true; fallback.hidden = false; });
+  shot.addEventListener('load', () => { shot.hidden = false; fallback.hidden = true; });
+  const caption = document.createElement('figcaption');
+  figure.appendChild(shot);
+  figure.appendChild(fallback);
+  figure.appendChild(caption);
+  layout.appendChild(figure);
+
+  const tableWrapper = document.createElement('div');
+  tableWrapper.className = 'mode-table-wrapper';
+  const heading = document.createElement('h3');
+  heading.dataset.i18n = 'ghosts.table.heading';
+  heading.textContent = t('ghosts.table.heading');
+  tableWrapper.appendChild(heading);
+  const tableContainer = document.createElement('div');
+  tableContainer.className = 'table-wrapper';
+  const table = document.createElement('table');
+  table.className = 'leaderboard-table';
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  table.appendChild(tbody);
+  tableContainer.appendChild(table);
+  tableWrapper.appendChild(tableContainer);
+  const empty = document.createElement('p');
+  empty.className = 'empty-state';
+  empty.hidden = true;
+  tableWrapper.appendChild(empty);
+  const note = document.createElement('p');
+  note.className = 'ghost-note';
+  note.dataset.i18n = 'ghosts.note';
+  note.textContent = t('ghosts.note');
+  tableWrapper.appendChild(note);
+  layout.appendChild(tableWrapper);
+  panel.appendChild(layout);
+
+  elements.modeTabs.appendChild(button);
+  elements.modePanels.appendChild(panel);
+
+  modeElements.set(GHOST_TAB_KEY, {
+    button,
+    panel,
+    mapSelect: selects.map.select,
+    ghostSelects: selects,
+    table,
+    tableHeadRow: headerRow,
+    tableBody: tbody,
+    tableContainer,
+    empty,
+    levelshot: shot,
+    levelshotFallback: fallback,
+    levelshotCaption: caption,
+    tableHeading: heading,
+    isGhostTab: true
+  });
+}
+
+async function loadGhostCatalog() {
+  if (ghostState.catalog || ghostState.loading) {
+    return;
+  }
+  ghostState.loading = true;
+  ghostState.error = null;
+  renderGhostPanel();
+  try {
+    const response = await fetch(`${API_BASE}/ghosts/catalog`, { headers: { Accept: 'application/json' } });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    ghostState.catalog = Array.isArray(data.maps) ? data.maps : [];
+  } catch (error) {
+    ghostState.error = error.message || String(error);
+  } finally {
+    ghostState.loading = false;
+  }
+  ghostNormalizeSelection();
+  renderGhostPanel();
+}
+
+function ghostListKey() {
+  return [ghostState.map, ghostState.variant, ghostState.bucket, ghostState.vehicle].join('|');
+}
+
+async function loadGhostList() {
+  const key = ghostListKey();
+  const variant = ghostFindVariant();
+  const bucket = ghostFindBucket();
+  if (!variant || !bucket || ghostState.lists.has(key)) {
+    return;
+  }
+  ghostState.lists.set(key, { loading: true, ghosts: [] });
+  const params = new URLSearchParams({
+    map: ghostState.map,
+    tl: String(variant.trackLength),
+    rev: String(variant.trackReversed),
+    physics: String(bucket.physicsVersion),
+    checksum: String(bucket.mapChecksum),
+    limit: '100'
+  });
+  if (ghostState.vehicle) {
+    params.set('vehicle', ghostState.vehicle);
+  }
+  try {
+    const response = await fetch(`${API_BASE}/ghosts?${params.toString()}`, { headers: { Accept: 'application/json' } });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    ghostState.lists.set(key, { loading: false, ghosts: Array.isArray(data.ghosts) ? data.ghosts : [] });
+  } catch (error) {
+    ghostState.lists.set(key, { loading: false, ghosts: [], error: error.message || String(error) });
+  }
+  if (ghostListKey() === key) {
+    renderGhostPanel();
+  }
+}
+
+function ghostFormatDay(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) {
+    return '–';
+  }
+  return date.toLocaleDateString(getLocale(), { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
+function ghostFormatGap(ms) {
+  if (!ms) {
+    return '–';
+  }
+  return `+${(ms / 1000).toFixed(3)}`;
+}
+
+function renderGhostPanel() {
+  const refs = modeElements.get(GHOST_TAB_KEY);
+  if (!refs) {
+    return;
+  }
+  refs.button.textContent = t('ghosts.tab');
+  if (!ghostState.catalog) {
+    refs.tableContainer.hidden = true;
+    refs.empty.hidden = false;
+    refs.empty.textContent = ghostState.error
+      ? t('ghosts.status.error', { message: ghostState.error })
+      : t('ghosts.status.loading');
+    Object.values(refs.ghostSelects).forEach(({ select }) => { select.disabled = true; });
+    if (!ghostState.loading && !ghostState.error) {
+      loadGhostCatalog();
+    }
+    return;
+  }
+
+  const maps = ghostState.catalog;
+  const map = ghostFindMap();
+  const variant = ghostFindVariant();
+  const bucket = ghostFindBucket();
+  const s = refs.ghostSelects;
+
+  ghostFillSelect(s.map.select, maps.map((m) => ({ value: m.map, label: humanizeMapName(m.map) })), ghostState.map);
+  ghostFillSelect(s.variant.select, (map ? map.variants : []).map((v) => ({
+    value: v.variant, label: `${ghostVariantLabel(v)} (${v.count})`
+  })), ghostState.variant);
+  const vehicleOptions = [{ value: '', label: t('ghosts.controls.allVehicles') }];
+  if (bucket) {
+    Object.keys(bucket.vehicles).forEach((vehicle) => {
+      vehicleOptions.push({ value: vehicle, label: `${vehicle} (${bucket.vehicles[vehicle]})` });
+    });
+  }
+  ghostFillSelect(s.vehicle.select, vehicleOptions, ghostState.vehicle);
+  s.vehicle.select.disabled = !bucket;
+  const buckets = variant ? variant.buckets : [];
+  ghostFillSelect(s.bucket.select, buckets.map((b, index) => ({
+    value: b.bucket,
+    label: index === 0
+      ? t('ghosts.build.current', { physics: b.physicsVersion })
+      : t('ghosts.build.older', { physics: b.physicsVersion, date: ghostFormatDay(b.lastReceivedAt) })
+  })), ghostState.bucket);
+  /* Only worth showing when a map was updated or the physics changed. */
+  s.bucket.wrapper.hidden = buckets.length < 2;
+
+  updateLevelshot(GHOST_TAB_KEY, map ? { map: map.map } : null);
+
+  const columns = [
+    ['rank', 'leaderboard.headers.rank'],
+    ['player', 'leaderboard.headers.player'],
+    ['vehicle', 'ghosts.headers.vehicle'],
+    ['time', 'ghosts.headers.lap'],
+    ['gap', 'ghosts.headers.gap'],
+    ['recorded', 'ghosts.headers.recorded'],
+    ['download', 'ghosts.headers.download']
+  ];
+  refs.tableHeadRow.innerHTML = '';
+  columns.forEach(([, labelKey]) => {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.dataset.i18n = labelKey;
+    th.textContent = t(labelKey);
+    refs.tableHeadRow.appendChild(th);
+  });
+
+  if (!maps.length || !bucket) {
+    refs.tableBody.innerHTML = '';
+    refs.tableContainer.hidden = true;
+    refs.empty.hidden = false;
+    refs.empty.textContent = t('ghosts.status.empty');
+    return;
+  }
+
+  const list = ghostState.lists.get(ghostListKey());
+  if (!list) {
+    loadGhostList();
+  }
+  if (!list || list.loading || list.error) {
+    refs.tableBody.innerHTML = '';
+    refs.tableContainer.hidden = true;
+    refs.empty.hidden = false;
+    refs.empty.textContent = list && list.error
+      ? t('ghosts.status.error', { message: list.error })
+      : t('ghosts.status.loading');
+    return;
+  }
+  if (!list.ghosts.length) {
+    refs.tableBody.innerHTML = '';
+    refs.tableContainer.hidden = true;
+    refs.empty.hidden = false;
+    refs.empty.textContent = t('ghosts.status.empty');
+    return;
+  }
+
+  refs.tableContainer.hidden = false;
+  refs.empty.hidden = true;
+  refs.tableBody.innerHTML = '';
+  const bestMs = list.ghosts[0].lapMs;
+  list.ghosts.forEach((ghost, index) => {
+    const tr = document.createElement('tr');
+    columns.forEach(([key]) => {
+      const td = document.createElement('td');
+      switch (key) {
+        case 'rank':
+          td.textContent = String(index + 1);
+          break;
+        case 'player': {
+          td.classList.add('leaderboard-player');
+          const strong = document.createElement('strong');
+          if (ghost.playerId) {
+            const link = document.createElement('a');
+            link.href = '#';
+            link.className = 'player-link';
+            link.textContent = ghost.playerName || t('common.unknown');
+            link.addEventListener('click', (event) => {
+              event.preventDefault();
+              showPlayerProfile(ghost.playerId, ghost.playerName);
+            });
+            strong.appendChild(link);
+          } else {
+            strong.textContent = ghost.playerName || t('common.unknown');
+          }
+          td.appendChild(strong);
+          break;
+        }
+        case 'vehicle':
+          td.textContent = ghost.vehicle || '–';
+          break;
+        case 'time':
+          td.textContent = formatRaceTime(ghost.lapMs / 1000);
+          break;
+        case 'gap':
+          td.textContent = ghostFormatGap(ghost.lapMs - bestMs);
+          break;
+        case 'recorded':
+          td.textContent = ghostFormatDay(ghost.receivedAt);
+          break;
+        case 'source':
+          td.textContent = ghost.source === 'online' ? t('ghosts.source.online') : t('ghosts.source.offline');
+          break;
+        case 'download': {
+          const link = document.createElement('a');
+          link.href = `${API_BASE}/ghosts/${encodeURIComponent(ghost.ghostId)}?format=raw&download=1`;
+          link.download = `${ghost.ghostId}.ghost`;
+          link.textContent = '.ghost';
+          link.title = t('ghosts.download.title');
+          td.appendChild(link);
+          break;
+        }
+        default:
+          td.textContent = '';
+      }
+      tr.appendChild(td);
+    });
+    refs.tableBody.appendChild(tr);
+  });
+}
+
+createModeTabs();
+createGhostTab();
+const _savedLang = localStorage.getItem('q3rally_lang');
+applyLanguage((_savedLang === 'de' || _savedLang === 'en') ? _savedLang : state.language);
+setActiveMode(state.activeMode);
+elements.languageButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    const lang = button.dataset.lang;
+    if (lang && lang !== state.language) {
+      applyLanguage(lang);
+      localStorage.setItem('q3rally_lang', lang);
+    }
+  });
+});
+loadMatches();
+
+  </script>
+</body>
+</html>
+<?php
+        exit;
+    }
+} catch (Throwable $e) {
+    // if the frontend fails for any reason, continue with API logic
+}
+// --- End frontend ---
+
+
+$pathInfo = $_SERVER['PATH_INFO'] ?? '';
+$path = trim($pathInfo, '/');
+$segments = $path === '' ? [] : explode('/', $path);
+$segments = normalize_api_segments($segments);
+
+try {
+    switch ($method) {
+        case 'POST':
+            ladder_check_rate_limit();
+            ladder_locked(static function () use ($segments): void {
+                handle_post($segments);
+            });
+            break;
+        case 'GET':
+            handle_get($segments);
+            break;
+        case 'DELETE':
+            $deleteKey = keys_require_auth('', false, false);
+            ladder_locked(static function () use ($segments, $deleteKey): void {
+                handle_delete($segments, $deleteKey);
+            });
+            break;
+        default:
+            send_error(405, 'Method not allowed.');
+    }
+} catch (LadderApiException $e) {
+    send_error($e->statusCode(), $e->getMessage(), $e->errorCode(), $e->details());
+} catch (RuntimeException $e) {
+    send_error(400, $e->getMessage(), 'BAD_REQUEST');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PLAYER PROFILES
+// Per-player career data extracted from match payloads and stored in
+// data/profiles/PLAYERID.json. Updated on every match upload when the
+// local client includes a profile snapshot.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Rank table mirrored from profile_shared.h PROFILE_RANK_TABLE
+const LADDER_RANK_NAMES = [
+    'Rookie Driver', 'Street Newbie', 'Weekend Racer', 'Track Learner',
+    'Amateur Racer', 'Street Racer', 'Semi-Pro Driver', 'Pro Racer',
+    'Elite Driver', 'Track Dominator', 'Master of Speed', 'Racing Legend',
+    'Asphalt King', 'Grand Champion', 'Q3Rally Icon'
+];
+
+// Achievement category names mirrored from bg_achievements.c
+const LADDER_ACHIEVEMENT_NAMES = [
+    'Distance Driven', 'Kills', 'Races Won', 'Sprint Wins',
+    'Flags Captured', 'Flag Assists', 'Fuel Consumed', 'Accuracy',
+    'Excellent', 'Impressive', 'Perfect'
+];
+
+function profile_path(string $playerId): string
+{
+    $safe = preg_replace('/[^a-zA-Z0-9._-]/', '_', $playerId);
+    return PROFILES_DIR . '/' . $safe . '.json';
+}
+
+function profile_load(string $playerId): ?array
+{
+    $path = profile_path($playerId);
+    if (!is_file($path)) {
+        return null;
+    }
+    $raw = file_get_contents($path);
+    if ($raw === false) {
+        return null;
+    }
+    $data = json_decode($raw, true);
+    return is_array($data) ? $data : null;
+}
+
+function profile_save(string $playerId, array $data): void
+{
+    if (!is_dir(PROFILES_DIR)) {
+        mkdir(PROFILES_DIR, 0775, true);
+    }
+    $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($json === false || !ladder_write_atomic(profile_path($playerId), $json)) {
+        error_log('Ladder: failed to save profile ' . $playerId);
+    }
+}
+
+/**
+ * Extract and upsert profile data from an incoming match payload.
+ * Called once per upload. Only updates if the payload contains a valid
+ * profile snapshot (local client only).
+ */
+function profile_is_valid_uuid(string $s): bool
+{
+    return (bool) preg_match(
+        '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i',
+        $s
+    );
+}
+
+function profile_snapshot_int(?array $snapshot, string $key): ?int
+{
+    if (!is_array($snapshot) || !array_key_exists($key, $snapshot)) {
+        return null;
+    }
+    $value = $snapshot[$key];
+    if (is_int($value) || is_float($value) || (is_string($value) && is_numeric($value))) {
+        return (int) $value;
+    }
+    return null;
+}
+
+function profile_match_checksum(string $matchId, string $mode, array $player): string
+{
+    $material = [
+        'matchId' => $matchId,
+        'mode' => $mode,
+        'playerId' => (string)($player['playerId'] ?? ''),
+        'clientNum' => (int)($player['clientNum'] ?? -1),
+        'score' => (int)($player['score'] ?? $player['rawScore'] ?? 0),
+        'kills' => (int)($player['kills'] ?? 0),
+        'deaths' => (int)($player['deaths'] ?? 0),
+        'position' => (int)($player['position'] ?? 0),
+    ];
+    return hash('sha256', json_encode($material, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '');
+}
+
+function profile_normalize_processed_match_ids(array $profile): array
+{
+    $ids = array_values(array_filter((array)($profile['_processedMatchIds'] ?? []), 'is_string'));
+    $ids = array_values(array_filter(array_map('normalize_match_id', $ids), static fn($v) => $v !== ''));
+    if (empty($ids) && isset($profile['_lastProcessedMatchId']) && is_string($profile['_lastProcessedMatchId'])) {
+        $legacy = normalize_match_id($profile['_lastProcessedMatchId']);
+        if ($legacy !== '') {
+            $ids[] = $legacy;
+        }
+    }
+    return array_slice(array_values(array_unique($ids)), -200);
+}
+
+function ladder_parse_server_match_seq($value): ?int
+{
+    if (is_int($value)) {
+        $seq = $value;
+    } elseif (is_float($value)) {
+        if (!is_finite($value)) {
+            return null;
+        }
+        if (floor($value) !== $value) {
+            return null;
+        }
+        $seq = (int)$value;
+    } elseif (is_string($value) && preg_match('/^\d+$/', $value)) {
+        $seq = (int)$value;
+    } else {
+        return null;
+    }
+
+    return $seq > 0 ? $seq : null;
+}
+
+function profile_last_server_match_seq(array $profile): ?int
+{
+    if (!isset($profile['_lastProcessedMatch']) || !is_array($profile['_lastProcessedMatch'])) {
+        return null;
+    }
+    if (!array_key_exists('serverMatchSeq', $profile['_lastProcessedMatch'])) {
+        return null;
+    }
+    return ladder_parse_server_match_seq($profile['_lastProcessedMatch']['serverMatchSeq']);
+}
+
+function profile_hydrate_ingest_metadata(array $profile): array
+{
+    if (!isset($profile['lastIngestedMatchId']) && isset($profile['_lastProcessedMatch']['matchId']) && is_string($profile['_lastProcessedMatch']['matchId'])) {
+        $profile['lastIngestedMatchId'] = $profile['_lastProcessedMatch']['matchId'];
+    }
+    if (!isset($profile['lastIngestedAt']) && isset($profile['_lastProcessedMatch']['timestamp']) && is_string($profile['_lastProcessedMatch']['timestamp'])) {
+        $profile['lastIngestedAt'] = $profile['_lastProcessedMatch']['timestamp'];
+    }
+    if (!isset($profile['lastIngestedMode']) && isset($profile['_lastProcessedMatch']['mode']) && is_string($profile['_lastProcessedMatch']['mode'])) {
+        $profile['lastIngestedMode'] = $profile['_lastProcessedMatch']['mode'];
+    }
+    if (!isset($profile['lastServerMatchSeq']) && isset($profile['_lastProcessedMatch']['serverMatchSeq'])) {
+        $legacySeq = ladder_parse_server_match_seq($profile['_lastProcessedMatch']['serverMatchSeq']);
+        if ($legacySeq !== null) {
+            $profile['lastServerMatchSeq'] = $legacySeq;
+        }
+    }
+    return $profile;
+}
+
+function profile_normalize_team_label($value): string
+{
+    if (is_int($value) || is_float($value) || (is_string($value) && is_numeric($value))) {
+        $teamNum = (int)$value;
+        return match ($teamNum) {
+            1 => 'red',
+            2 => 'blue',
+            3 => 'green',
+            4 => 'yellow',
+            default => '',
+        };
+    }
+
+    if (!is_string($value)) {
+        return '';
+    }
+
+    $raw = strtolower(trim($value));
+    return match ($raw) {
+        '1', 'red' => 'red',
+        '2', 'blue' => 'blue',
+        '3', 'green' => 'green',
+        '4', 'yellow' => 'yellow',
+        default => '',
+    };
+}
+
+function profile_pick_winner_team_by_scores(array $scoresByTeam): ?string
+{
+    $topScore = null;
+    $topTeam = null;
+    $isTie = false;
+    foreach ($scoresByTeam as $team => $score) {
+        if (!in_array($team, ['red', 'blue', 'green', 'yellow'], true)) {
+            continue;
+        }
+        if (!is_int($score) && !is_float($score)) {
+            continue;
+        }
+        $scoreValue = (float)$score;
+        if ($topScore === null || $scoreValue > $topScore) {
+            $topScore = $scoreValue;
+            $topTeam = $team;
+            $isTie = false;
+        } elseif ($scoreValue === $topScore) {
+            $isTie = true;
+        }
+    }
+
+    if ($topTeam === null || $isTie) {
+        return null;
+    }
+    return $topTeam;
+}
+
+function profile_pick_winner_team_by_lowest_time(array $timesByTeam): ?string
+{
+    $bestTime = null;
+    $bestTeam = null;
+    $isTie = false;
+    foreach ($timesByTeam as $team => $time) {
+        if (!in_array($team, ['red', 'blue', 'green', 'yellow'], true)) {
+            continue;
+        }
+        if (!is_int($time) && !is_float($time)) {
+            continue;
+        }
+        $timeValue = (float)$time;
+        if ($timeValue <= 0) {
+            continue;
+        }
+        if ($bestTime === null || $timeValue < $bestTime) {
+            $bestTime = $timeValue;
+            $bestTeam = $team;
+            $isTie = false;
+        } elseif ($timeValue === $bestTime) {
+            $isTie = true;
+        }
+    }
+
+    if ($bestTeam === null || $isTie) {
+        return null;
+    }
+    return $bestTeam;
+}
+
+function profile_collect_team_times(array $payload): array
+{
+    $timesByTeam = [];
+    if (isset($payload['teamTimes']) && is_array($payload['teamTimes'])) {
+        foreach ($payload['teamTimes'] as $teamKey => $timeValue) {
+            if (!is_int($timeValue) && !is_float($timeValue) && !(is_string($timeValue) && is_numeric($timeValue))) {
+                continue;
+            }
+            $teamName = profile_normalize_team_label($teamKey);
+            if ($teamName === '') {
+                continue;
+            }
+            $timesByTeam[$teamName] = (float)$timeValue;
+        }
+    }
+
+    foreach (['red', 'blue', 'green', 'yellow'] as $teamName) {
+        $field = $teamName . 'Time';
+        if (array_key_exists($field, $payload) &&
+            (is_int($payload[$field]) || is_float($payload[$field]) ||
+             (is_string($payload[$field]) && is_numeric($payload[$field])))) {
+            $timesByTeam[$teamName] = (float)$payload[$field];
+        }
+    }
+
+    return $timesByTeam;
+}
+
+function profile_upsert_from_payload(array $payload): void
+{
+    $players = $payload['players'] ?? [];
+    if (!is_array($players)) {
+        return;
+    }
+
+    $mode = $payload['mode'] ?? '';
+    $teamModes = ['GT_TEAM', 'GT_TEAM_RACING', 'GT_TEAM_RACING_DM', 'GT_CTF', 'GT_CTF4', 'GT_DOMINATION', 'GT_KOTH', 'GT_AUTOBALL'];
+    $isTeamMode = in_array($mode, $teamModes, true);
+    $isTeamRaceMode = in_array($mode, ['GT_TEAM_RACING', 'GT_TEAM_RACING_DM'], true);
+    $winnerClientNum = -1;
+    $hasWinnerClientNum = false;
+    if (array_key_exists('winnerClientNum', $payload) &&
+        (is_int($payload['winnerClientNum']) ||
+         is_float($payload['winnerClientNum']) ||
+         (is_string($payload['winnerClientNum']) && is_numeric($payload['winnerClientNum'])))) {
+        $winnerClientNum = (int) $payload['winnerClientNum'];
+        $hasWinnerClientNum = $winnerClientNum >= 0;
+    } elseif (isset($payload['settings']) &&
+              is_array($payload['settings']) &&
+              array_key_exists('winnerClientNum', $payload['settings']) &&
+              (is_int($payload['settings']['winnerClientNum']) ||
+               is_float($payload['settings']['winnerClientNum']) ||
+               (is_string($payload['settings']['winnerClientNum']) && is_numeric($payload['settings']['winnerClientNum'])))) {
+        // Legacy fallback: old payloads nested the winner in settings.
+        $winnerClientNum = (int) $payload['settings']['winnerClientNum'];
+        $hasWinnerClientNum = $winnerClientNum >= 0;
+    }
+
+    $humanPlayers = [];
+    foreach ($players as $candidate) {
+        if (!is_array($candidate) || !empty($candidate['isBot'])) {
+            continue;
+        }
+        $candidateClientNum = (int)($candidate['clientNum'] ?? -1);
+        $candidateTeam = profile_normalize_team_label($candidate['team'] ?? null);
+        $humanPlayers[] = [
+            'clientNum' => $candidateClientNum,
+            'team' => $candidateTeam,
+            'position' => (int)($candidate['position'] ?? 0),
+        ];
+    }
+
+    $winnerTeam = null;
+    if ($isTeamMode) {
+        if ($hasWinnerClientNum) {
+            foreach ($humanPlayers as $hp) {
+                if ($hp['clientNum'] === $winnerClientNum && $hp['team'] !== '') {
+                    $winnerTeam = $hp['team'];
+                    break;
+                }
+            }
+        }
+        if ($winnerTeam === null && $isTeamRaceMode) {
+            $winnerTeam = profile_pick_winner_team_by_lowest_time(profile_collect_team_times($payload));
+        }
+        if ($winnerTeam === null && isset($payload['teams']) && is_array($payload['teams'])) {
+            $teamScores = [];
+            foreach ($payload['teams'] as $teamEntry) {
+                if (!is_array($teamEntry)) {
+                    continue;
+                }
+                $teamName = profile_normalize_team_label($teamEntry['team'] ?? null);
+                if ($teamName === '') {
+                    continue;
+                }
+                $score = null;
+                foreach (['rawScore', 'score', 'points'] as $field) {
+                    if (array_key_exists($field, $teamEntry) &&
+                        (is_int($teamEntry[$field]) || is_float($teamEntry[$field]) ||
+                         (is_string($teamEntry[$field]) && is_numeric($teamEntry[$field])))) {
+                        $score = (float) $teamEntry[$field];
+                        break;
+                    }
+                }
+                if ($score === null) {
+                    continue;
+                }
+                $teamScores[$teamName] = (float)$score;
+            }
+            $winnerTeam = profile_pick_winner_team_by_scores($teamScores);
+        }
+
+        if ($winnerTeam === null) {
+            $teamScores = [];
+            if (isset($payload['teamScores']) && is_array($payload['teamScores'])) {
+                foreach ($payload['teamScores'] as $teamKey => $scoreValue) {
+                    if (!is_int($scoreValue) && !is_float($scoreValue) && !(is_string($scoreValue) && is_numeric($scoreValue))) {
+                        continue;
+                    }
+                    $teamName = profile_normalize_team_label($teamKey);
+                    if ($teamName === '') {
+                        continue;
+                    }
+                    $teamScores[$teamName] = (float)$scoreValue;
+                }
+            }
+
+            foreach (['red', 'blue', 'green', 'yellow'] as $teamName) {
+                $field = $teamName . 'Score';
+                if (array_key_exists($field, $payload) &&
+                    (is_int($payload[$field]) || is_float($payload[$field]) ||
+                     (is_string($payload[$field]) && is_numeric($payload[$field])))) {
+                    $teamScores[$teamName] = (float)$payload[$field];
+                }
+            }
+
+            $winnerTeam = profile_pick_winner_team_by_scores($teamScores);
+        }
+    }
+
+    if (!$hasWinnerClientNum && !$isTeamMode) {
+        $positionOne = array_values(array_filter(
+            $humanPlayers,
+            static fn($hp) => (int)($hp['position'] ?? 0) === 1
+        ));
+        if (count($positionOne) === 1) {
+            $winnerClientNum = (int)$positionOne[0]['clientNum'];
+            $hasWinnerClientNum = $winnerClientNum >= 0;
+        }
+    }
+
+    foreach ($players as $player) {
+        if (!is_array($player)) {
+            continue;
+        }
+
+        if (!empty($player['isBot'])) {
+            continue;
+        }
+
+        $playerId = (string)($player['playerId'] ?? '');
+        if ($playerId === '' || !profile_is_valid_uuid($playerId)) {
+            continue;
+        }
+
+        $existing = profile_load($playerId) ?? [];
+
+        // ── Snapshot-first: Nur valide Snapshots als Primärquelle nutzen.
+        $snap = (isset($player['profile']) && is_array($player['profile']) && !empty($player['profile']['valid']))
+            ? $player['profile']
+            : null;
+        $matchId = isset($payload['matchId']) && is_string($payload['matchId']) ? normalize_match_id($payload['matchId']) : '';
+        $serverMatchSeq = array_key_exists('serverMatchSeq', $payload)
+            ? ladder_parse_server_match_seq($payload['serverMatchSeq'])
+            : null;
+        $receivedAt = is_string($payload['receivedAt'] ?? null) && $payload['receivedAt'] !== ''
+            ? $payload['receivedAt']
+            : gmdate('c');
+        $processedMatchIds = profile_normalize_processed_match_ids($existing);
+        $alreadyCounted = $matchId !== '' && in_array($matchId, $processedMatchIds, true);
+        $lastServerMatchSeq = profile_last_server_match_seq($existing);
+        $isOutdatedBySeq = $serverMatchSeq !== null &&
+                           $lastServerMatchSeq !== null &&
+                           $serverMatchSeq < $lastServerMatchSeq;
+        // Use strict less-than only: a match with the same seq as the last seen
+        // one is NOT a replay – it can happen after a server restart that resets
+        // the counter. Exact-match deduplication is already handled by
+        // $alreadyCounted (matchId set membership).
+        $isReplayBySeq = $isOutdatedBySeq;
+        $countThisMatch = $isReplayBySeq ? false : !$alreadyCounted;
+
+        // ── Win-Detection ──────────────────────────────────────────────
+        $clientNum  = (int)($player['clientNum'] ?? -1);
+        $position   = (int)($player['position'] ?? 0);
+        $playerTeam = profile_normalize_team_label($player['team'] ?? null);
+        $isWinnerByClient = $hasWinnerClientNum && $winnerClientNum >= 0 && $winnerClientNum === $clientNum;
+        $isWinnerByTeam = $isTeamMode && $winnerTeam !== null && $playerTeam !== '' && $playerTeam === $winnerTeam;
+        $isWinner = $isTeamMode ? $isWinnerByTeam : $isWinnerByClient;
+
+        // ── Accuracy Award ─────────────────────────────────────────────
+        $accuracy      = (int)($player['accuracy'] ?? 0);
+        $accuracyAward = ($accuracy >= 75) ? 1 : 0;
+        // Mirror the same fallback as extract_player_kills() so that profile
+        // upsert and the match index see the same kill value for legacy payloads
+        // that omit the dedicated kills field and mirror it from score.
+        $matchKills = (int)(
+            $player['kills']
+            ?? $player['frags']
+            ?? $player['elims']
+            ?? (mode_is_deathmatch_like($mode) || mode_is_objective($mode) || mode_is_derby($mode)
+                ? ($player['score'] ?? $player['rawScore'] ?? $player['playerScore'] ?? 0)
+                : 0)
+        );
+        $matchDeaths   = (int)($player['deaths'] ?? $player['deathCount'] ?? 0);
+        $matchRaceMs   = (int)($player['totalRaceMs'] ?? 0);
+
+        // ── Vehicle ────────────────────────────────────────────────────
+        $modelRaw    = (string)($player['model'] ?? '');
+        $vehicleName = $modelRaw !== '' ? explode('/', $modelRaw)[0]
+                                        : ($existing['mostUsedVehicle'] ?? '');
+
+        // ── Snapshot-Werte (lokal getrackt, absolut) ───────────────────
+        $distanceKm  = $snap ? (float)($snap['distanceKm']  ?? $existing['distanceKm']  ?? 0.0)
+                              : (float)($existing['distanceKm']  ?? 0.0);
+        $topSpeedKph = $snap ? max((float)($snap['topSpeedKph'] ?? 0), (float)($existing['topSpeedKph'] ?? 0))
+                              : (float)($existing['topSpeedKph'] ?? 0.0);
+        $fuelUsed    = $snap ? (float)($snap['fuelUsed']    ?? $existing['fuelUsed']    ?? 0.0)
+                              : (float)($existing['fuelUsed']    ?? 0.0);
+        $mostUsed    = $snap ? ((string)($snap['mostUsedVehicle'] ?? '') ?: $vehicleName)
+                              : $vehicleName;
+
+        // ── Helper: per-mode career counters (wins, completed, podiums, totals,
+        // awards). The game records the match outcome into the local profile
+        // BEFORE the payload is built (G_RecordMatchOutcome in LogExit), so a
+        // snapshot that is ahead of the stored value already contains this
+        // match. It is taken as-is; the match delta is only added when there is
+        // no snapshot (remote players) or the snapshot is not ahead.
+        // Previously max(existing, snapshot) + delta counted every match twice
+        // for the local player, so e.g. wins/completed ran one ahead.
+        $pickCareer = function(string $key, int $delta = 0) use ($snap, $existing, $countThisMatch): int {
+            $existingValue = (int)($existing[$key] ?? 0);
+            $snapValue = profile_snapshot_int($snap, $key);
+            if ($snapValue !== null && $snapValue > $existingValue) {
+                return $snapValue;
+            }
+            return $existingValue + ($countThisMatch ? $delta : 0);
+        };
+
+        $pickCareerWithBaselineDelta = $pickCareer;
+        $mergeCareerCountField = function(string $field, int $deltaValue) use ($snap, $existing, $countThisMatch, $matchId): int {
+            $existingValue = (int)($existing[$field] ?? 0);
+            $snapshotValue = profile_snapshot_int($snap, $field);
+
+            // The snapshot carries a cumulative total from the local client (same
+            // source as PERS_* counters). It must never be used as a baseline that
+            // we then add the delta on top of: doing so double-counts the event
+            // (once in the snapshot total, once as the new delta).
+            //
+            // Strategy:
+            //   • If a valid snapshot is present AND it is strictly higher than the
+            //     stored value, accept the snapshot as-is (the client advanced its
+            //     counter; the delta from this match is already included).
+            //   • Otherwise fall back to stored value + delta (no snapshot, or
+            //     snapshot is stale / equal).
+            if ($snapshotValue !== null && $snapshotValue > $existingValue) {
+                // Snapshot already incorporates this match's contribution.
+                $finalValue = $snapshotValue;
+            } else {
+                // No snapshot (remote player) or snapshot is not ahead – use delta.
+                $finalValue = $existingValue + ($countThisMatch ? $deltaValue : 0);
+            }
+
+            ladder_pipeline_log('php-profile_upsert-merge-field', [
+                'matchId' => $matchId,
+                'field' => $field,
+                'existing' => $existingValue,
+                'snapshot' => $snapshotValue,
+                'delta' => $deltaValue,
+                'final' => $finalValue,
+            ]);
+
+            return $finalValue;
+        };
+
+        $hasOutcome = $isTeamMode ? ($winnerTeam !== null) : ($hasWinnerClientNum && $winnerClientNum >= 0);
+        $derivedWins = ($hasOutcome && $isWinner) ? 1 : 0;
+        $derivedLosses = ($hasOutcome && !$isWinner) ? 1 : 0;
+        $snapshotPresent = $snap !== null;
+        $existingWins = (int)($existing['wins'] ?? 0);
+        $baseWins = $existingWins;
+        if ($snapshotPresent) {
+            $baseWins = max($baseWins, (int)($snap['wins'] ?? $baseWins));
+        }
+        $deltaWins = $countThisMatch ? $derivedWins : 0;
+        $newWins = $baseWins + $deltaWins;
+
+        ladder_pipeline_log('php-profile_upsert-player', [
+            'matchId' => $matchId,
+            'playerId' => $playerId,
+            'alreadyCounted' => $alreadyCounted,
+            'snapshotPresent' => $snapshotPresent,
+            'existingWins' => $existingWins,
+            'deltaWins' => $deltaWins,
+            'newWins' => $newWins,
+        ]);
+
+        $isRaceCareerMode = in_array($mode, ['GT_RACING', 'GT_RACING_DM', 'GT_SPRINT', 'GT_TEAM_RACING', 'GT_TEAM_RACING_DM'], true);
+        $racePosition = (int)($player['position'] ?? $player['rank'] ?? 0);
+        $isRacePodium = $racePosition > 0 && $racePosition <= 3;
+        $raceTotalMs = $isRaceCareerMode ? max(0, $matchRaceMs) : 0;
+
+        $careerDeltas = [
+            'racingWinsDelta' => 0,
+            'racingPodiumsDelta' => 0,
+            'racingCompletedDelta' => 0,
+            'racingTotalMsDelta' => 0,
+            'racingDmWinsDelta' => 0,
+            'racingDmPodiumsDelta' => 0,
+            'racingDmCompletedDelta' => 0,
+            'racingDmTotalMsDelta' => 0,
+            'sprintWinsDelta' => 0,
+            'sprintCompletedDelta' => 0,
+            'eliminationWinsDelta' => 0,
+            'eliminationCompletedDelta' => 0,
+            'lcsWinsDelta' => 0,
+            'lcsCompletedDelta' => 0,
+            'lcsTotalSurvivalMsDelta' => 0,
+            'derbyWinsDelta' => 0,
+            'derbyCompletedDelta' => 0,
+            'derbyKillsDelta' => 0,
+            'dmWinsDelta' => 0,
+            'dmCompletedDelta' => 0,
+            'dmKillsDelta' => 0,
+            'ctfWinsDelta' => 0,
+            'ctfCompletedDelta' => 0,
+            'ctfCapturesDelta' => 0,
+            'ctf4WinsDelta' => 0,
+            'ctf4CompletedDelta' => 0,
+            'ctf4CapturesDelta' => 0,
+            'teamWinsDelta' => 0,
+            'teamCompletedDelta' => 0,
+            'teamKillsDelta' => 0,
+            'teamRacingWinsDelta' => 0,
+            'teamRacingCompletedDelta' => 0,
+            'teamRacingPodiumsDelta' => 0,
+            'teamRacingDmWinsDelta' => 0,
+            'teamRacingDmCompletedDelta' => 0,
+            'teamRacingDmPodiumsDelta' => 0,
+            'dominationWinsDelta' => 0,
+            'dominationCompletedDelta' => 0,
+            'dominationZoneHoldMsDelta' => 0,
+            'kothWinsDelta' => 0,
+            'kothCompletedDelta' => 0,
+            'kothZoneHoldMsDelta' => 0,
+            'autoballWinsDelta' => 0,
+            'autoballCompletedDelta' => 0,
+            'autoballGoalsDelta' => 0,
+        ];
+
+        switch ($mode) {
+            case 'GT_RACING':
+                $careerDeltas['racingWinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['racingPodiumsDelta'] = $isRacePodium ? 1 : 0;
+                $careerDeltas['racingCompletedDelta'] = 1;
+                $careerDeltas['racingTotalMsDelta'] = $raceTotalMs;
+                break;
+            case 'GT_RACING_DM':
+                $careerDeltas['racingDmWinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['racingDmPodiumsDelta'] = $isRacePodium ? 1 : 0;
+                $careerDeltas['racingDmCompletedDelta'] = 1;
+                $careerDeltas['racingDmTotalMsDelta'] = $raceTotalMs;
+                break;
+            case 'GT_SPRINT':
+                $careerDeltas['sprintWinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['sprintCompletedDelta'] = 1;
+                break;
+            case 'GT_ELIMINATION':
+                $careerDeltas['eliminationWinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['eliminationCompletedDelta'] = 1;
+                break;
+            case 'GT_LCS':
+                $careerDeltas['lcsWinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['lcsCompletedDelta'] = 1;
+                $careerDeltas['lcsTotalSurvivalMsDelta'] = max(0, $matchRaceMs);
+                break;
+            case 'GT_DERBY':
+                $careerDeltas['derbyWinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['derbyCompletedDelta'] = 1;
+                $careerDeltas['derbyKillsDelta'] = max(0, $matchKills);
+                break;
+            case 'GT_DEATHMATCH':
+                $careerDeltas['dmWinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['dmCompletedDelta'] = 1;
+                $careerDeltas['dmKillsDelta'] = max(0, $matchKills);
+                break;
+            case 'GT_CTF':
+                $careerDeltas['ctfWinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['ctfCompletedDelta'] = 1;
+                $careerDeltas['ctfCapturesDelta'] = (int)($player['captures'] ?? 0);
+                break;
+            case 'GT_CTF4':
+                $careerDeltas['ctf4WinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['ctf4CompletedDelta'] = 1;
+                $careerDeltas['ctf4CapturesDelta'] = (int)($player['captures'] ?? 0);
+                break;
+            case 'GT_TEAM':
+                $careerDeltas['teamWinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['teamCompletedDelta'] = 1;
+                $careerDeltas['teamKillsDelta'] = max(0, $matchKills);
+                break;
+            case 'GT_TEAM_RACING':
+                $careerDeltas['teamRacingWinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['teamRacingCompletedDelta'] = 1;
+                $careerDeltas['teamRacingPodiumsDelta'] = $isRacePodium ? 1 : 0;
+                break;
+            case 'GT_TEAM_RACING_DM':
+                $careerDeltas['teamRacingDmWinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['teamRacingDmCompletedDelta'] = 1;
+                $careerDeltas['teamRacingDmPodiumsDelta'] = $isRacePodium ? 1 : 0;
+                break;
+            case 'GT_DOMINATION':
+                $careerDeltas['dominationWinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['dominationCompletedDelta'] = 1;
+                $careerDeltas['dominationZoneHoldMsDelta'] = (int)($player['zoneHoldMs'] ?? 0);
+                break;
+            case 'GT_KOTH':
+                $careerDeltas['kothWinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['kothCompletedDelta'] = 1;
+                $careerDeltas['kothZoneHoldMsDelta'] = (int)($player['zoneHoldMs'] ?? 0);
+                break;
+            case 'GT_AUTOBALL':
+                $careerDeltas['autoballWinsDelta'] = $isWinner ? 1 : 0;
+                $careerDeltas['autoballCompletedDelta'] = 1;
+                $careerDeltas['autoballGoalsDelta'] = max(0, (int)($player['autoballGoals'] ?? 0));
+                break;
+        }
+
+        // ── Score (Snapshot-first; Delta nur für Nicht-Snapshot-Spieler) ────
+        //
+        // The local client embeds a profile snapshot whose playerScore is the
+        // cumulative career total as tracked on-device. This is authoritative:
+        // adding a derived delta on top would double-count every match the
+        // client already recorded locally.
+        //
+        // Priority:
+        //   1. Explicit delta field in payload  -> always use it (server override)
+        //   2. Valid snapshot present           -> accept snapshot total directly;
+        //                                         advance only when snapshot > stored
+        //   3. No snapshot (remote player)      -> derive delta from match stats
+        $existingScore = (int)($existing['playerScore'] ?? 0);
+        $snapshotScore = ($snap !== null) ? (int)($snap['playerScore'] ?? 0) : null;
+
+        $scoreDeltaFromPayload = null;
+        foreach (['playerScoreDelta', 'scoreDelta', 'matchScoreDelta', 'awardedScore', 'awardedPoints'] as $deltaField) {
+            $rawDelta = $player[$deltaField] ?? $payload[$deltaField] ?? null;
+            if (is_int($rawDelta) || is_float($rawDelta) || (is_string($rawDelta) && is_numeric($rawDelta))) {
+                $scoreDeltaFromPayload = (int)$rawDelta;
+                break;
+            }
+        }
+
+        if ($scoreDeltaFromPayload !== null) {
+            // Explicit server-supplied delta.
+            $finalScore = $existingScore + ($countThisMatch ? $scoreDeltaFromPayload : 0);
+        } elseif ($snapshotScore !== null) {
+            // Snapshot present: the client is authoritative; never go backwards.
+            $finalScore = max($existingScore, $snapshotScore);
+        } else {
+            // Remote player, no snapshot - derive delta from match payload.
+            $scoreDeltaDerived = 0;
+            switch ($mode) {
+                case 'GT_DEATHMATCH':
+                case 'GT_TEAM':
+                case 'GT_DERBY':
+                    $scoreDeltaDerived = max(0, $matchKills);
+                    break;
+                case 'GT_CTF':
+                case 'GT_CTF4':
+                    $scoreDeltaDerived = max(0, (int)($player['captures'] ?? 0));
+                    break;
+                case 'GT_AUTOBALL':
+                    $scoreDeltaDerived = max(0, (int)($player['autoballGoals'] ?? 0));
+                    break;
+                case 'GT_DOMINATION':
+                case 'GT_KOTH':
+                    $scoreDeltaDerived = max(0, (int)($player['zoneHoldMs'] ?? 0));
+                    break;
+                case 'GT_LCS':
+                    $scoreDeltaDerived = max(0, (int)($player['totalRaceMs'] ?? 0));
+                    break;
+                case 'GT_ELIMINATION':
+                    $scoreDeltaDerived = $isWinner ? 1 : 0;
+                    break;
+                case 'GT_RACING':
+                case 'GT_RACING_DM':
+                case 'GT_SPRINT':
+                case 'GT_TEAM_RACING':
+                case 'GT_TEAM_RACING_DM':
+                default:
+                    $scoreDeltaDerived = max(0, (int)($player['playerScore'] ?? $player['score'] ?? $player['rawScore'] ?? 0));
+                    break;
+            }
+            $finalScore = $existingScore + ($countThisMatch ? $scoreDeltaDerived : 0);
+        }
+
+        $scoreDelta = $scoreDeltaFromPayload ?? ($snapshotScore !== null ? ($finalScore - $existingScore) : ($finalScore - $existingScore));
+
+        ladder_pipeline_log('php-profile_upsert-score', [
+            'matchId' => $matchId,
+            'playerId' => $playerId,
+            'existingScore' => $existingScore,
+            'snapshotScore' => $snapshotScore,
+            'scoreDelta' => $scoreDelta,
+            'countThisMatch' => $countThisMatch,
+            'finalScore' => $finalScore,
+        ]);
+
+        $profile = [
+            'playerId'        => $playerId,
+            'cleanName'       => (string)($player['cleanName'] ?? $player['name'] ?? ''),
+            'playerScore'     => max($finalScore, 0),
+            'currentRank'     => $snap ? (int)($snap['currentRank'] ?? $existing['currentRank'] ?? 0)
+                                       : (int)($player['rankTier'] ?? $existing['currentRank'] ?? 0),
+            'highestRank'     => max(
+                                    $snap ? (int)($snap['highestRank'] ?? 0) : 0,
+                                    (int)($player['rankTier'] ?? 0),
+                                    (int)($existing['highestRank'] ?? 0)
+                                 ),
+            // gamesPlayed: always increment by 1 for this match regardless of any
+            // snapshot value. The snapshot reflects the local client counter which
+            // is not synchronised with server matches. The ladder is the authoritative
+            // source for how many matches have been reported.
+            'gamesPlayed'     => (int)($existing['gamesPlayed'] ?? 0) + ($countThisMatch ? 1 : 0),
+
+            // ── Allgemein ───────────────────────────────────────────────
+            // wins/losses: C code (G_Profile_RecordWin/Loss) already writes the
+            // new cumulative total into the snapshot before the upload happens,
+            // so the snapshot is already ahead by 1. Using pickCareer would add
+            // derivedWins on top of the snapshot → double-count. Same pattern as
+            // damageDealt – use mergeCareerCountField which treats a strictly-ahead
+            // snapshot as authoritative and skips the delta.
+            'wins'            => $mergeCareerCountField('wins', $derivedWins),
+            'losses'          => $mergeCareerCountField('losses', $derivedLosses),
+            'kills'           => $mergeCareerCountField('kills', max(0, $matchKills)),
+            'deaths'          => $mergeCareerCountField('deaths', max(0, $matchDeaths)),
+            'flagCaptures'    => $mergeCareerCountField('flagCaptures', (int)($player['captures'] ?? 0)),
+            'flagAssists'     => $pickCareer('flagAssists', (int)($player['assistCount'] ?? 0)),
+            'bestLapMs'       => (function() use ($player, $existing, $snap, $isRaceCareerMode) {
+                $old = (int)($existing['bestLapMs'] ?? 0);
+                if (!$isRaceCareerMode) {
+                    return $old;
+                }
+                $new = (int)($snap['bestLapMs'] ?? $player['bestLapMs'] ?? 0);
+                if ($new > 0 && ($old === 0 || $new < $old)) return $new;
+                return $old ?: $new;
+            })(),
+            'accuracyAwards'  => $pickCareer('accuracyAwards', $accuracyAward),
+            'excellentAwards' => $pickCareer('excellentAwards', (int)($player['excellentCount'] ?? 0)),
+            'impressiveAwards'=> $pickCareer('impressiveAwards', (int)($player['impressiveCount'] ?? 0)),
+            'perfectAwards'   => $pickCareer('perfectAwards', !empty($player['perfect']) ? 1 : 0),
+            // Use mergeCareerCountField (not pickCareer) for damage stats:
+            // G_Profile_RecordDamage() updates the career total incrementally during
+            // the match, so the snapshot already contains this match's damage.
+            // pickCareer would add the per-match delta ON TOP of the snapshot baseline,
+            // causing double-counting. mergeCareerCountField uses the snapshot as-is
+            // when it's strictly ahead, matching the same logic used for kills/deaths.
+            'damageDealt'     => $mergeCareerCountField('damageDealt', (int)($player['damageDealt'] ?? 0)),
+            'damageTaken'     => $mergeCareerCountField('damageTaken', (int)($player['damageTaken'] ?? 0)),
+            'distanceKm'      => $distanceKm,
+            'topSpeedKph'     => $topSpeedKph,
+            'fuelUsed'        => $fuelUsed,
+            'mostUsedVehicle' => $mostUsed,
+
+            // ── GT_RACING ───────────────────────────────────────────────
+            'racingWins'      => $pickCareer('racingWins', $careerDeltas['racingWinsDelta']),
+            'racingPodiums'   => $pickCareer('racingPodiums', $careerDeltas['racingPodiumsDelta']),
+            'racingCompleted' => $pickCareer('racingCompleted', $careerDeltas['racingCompletedDelta']),
+            'racingTotalMs'   => $pickCareer('racingTotalMs', $careerDeltas['racingTotalMsDelta']),
+
+            // ── GT_RACING_DM ────────────────────────────────────────────
+            'racingDmWins'      => $pickCareer('racingDmWins', $careerDeltas['racingDmWinsDelta']),
+            'racingDmPodiums'   => $pickCareer('racingDmPodiums', $careerDeltas['racingDmPodiumsDelta']),
+            'racingDmCompleted' => $pickCareer('racingDmCompleted', $careerDeltas['racingDmCompletedDelta']),
+            'racingDmTotalMs'   => $pickCareer('racingDmTotalMs', $careerDeltas['racingDmTotalMsDelta']),
+
+            // ── GT_SPRINT ───────────────────────────────────────────────
+            'sprintWins'      => $pickCareer('sprintWins', $careerDeltas['sprintWinsDelta']),
+            'sprintCompleted' => $pickCareer('sprintCompleted', $careerDeltas['sprintCompletedDelta']),
+            'sprintBestMs'    => (function() use ($snap, $existing) {
+                $new = (int)($snap['sprintBestMs'] ?? 0);
+                $old = (int)($existing['sprintBestMs'] ?? 0);
+                if ($new > 0 && ($old === 0 || $new < $old)) return $new;
+                return $old ?: $new;
+            })(),
+
+            // ── GT_ELIMINATION ──────────────────────────────────────────
+            'eliminationWins'              => $pickCareer('eliminationWins', $careerDeltas['eliminationWinsDelta']),
+            'eliminationCompleted'         => $pickCareer('eliminationCompleted', $careerDeltas['eliminationCompletedDelta']),
+            // eliminationRound reflects how far the player survived; accumulate it.
+            'eliminationTotalRoundsLasted' => $pickCareer('eliminationTotalRoundsLasted', (int)($player['eliminationRound'] ?? 0)),
+
+            // ── GT_LCS ──────────────────────────────────────────────────
+            'lcsWins'            => $pickCareer('lcsWins', $careerDeltas['lcsWinsDelta']),
+            'lcsCompleted'       => $pickCareer('lcsCompleted', $careerDeltas['lcsCompletedDelta']),
+            'lcsTotalSurvivalMs' => $pickCareer('lcsTotalSurvivalMs', $careerDeltas['lcsTotalSurvivalMsDelta']),
+
+            // ── GT_DERBY ────────────────────────────────────────────────
+            'derbyWins'      => $pickCareer('derbyWins', $careerDeltas['derbyWinsDelta']),
+            'derbyCompleted' => $pickCareer('derbyCompleted', $careerDeltas['derbyCompletedDelta']),
+            'derbyKills'     => $pickCareer('derbyKills', $careerDeltas['derbyKillsDelta']),
+
+            // ── GT_DEATHMATCH ────────────────────────────────────────────
+            'dmWins'      => $pickCareer('dmWins', $careerDeltas['dmWinsDelta']),
+            'dmCompleted' => $pickCareer('dmCompleted', $careerDeltas['dmCompletedDelta']),
+            'dmKills'     => $mergeCareerCountField('dmKills', $careerDeltas['dmKillsDelta']),
+
+            // ── GT_CTF ──────────────────────────────────────────────────
+            'ctfWins'      => $pickCareer('ctfWins', $careerDeltas['ctfWinsDelta']),
+            'ctfCompleted' => $pickCareer('ctfCompleted', $careerDeltas['ctfCompletedDelta']),
+            'ctfCaptures'  => $mergeCareerCountField('ctfCaptures', $careerDeltas['ctfCapturesDelta']),
+
+            // ── GT_CTF4 ─────────────────────────────────────────────────
+            'ctf4Wins'      => $pickCareer('ctf4Wins', $careerDeltas['ctf4WinsDelta']),
+            'ctf4Completed' => $pickCareer('ctf4Completed', $careerDeltas['ctf4CompletedDelta']),
+            'ctf4Captures'  => $mergeCareerCountField('ctf4Captures', $careerDeltas['ctf4CapturesDelta']),
+
+            // ── GT_TEAM ─────────────────────────────────────────────────
+            'teamWins'      => $pickCareer('teamWins', $careerDeltas['teamWinsDelta']),
+            'teamCompleted' => $pickCareer('teamCompleted', $careerDeltas['teamCompletedDelta']),
+            'teamKills'     => $pickCareer('teamKills', $careerDeltas['teamKillsDelta']),
+
+            // ── GT_TEAM_RACING ───────────────────────────────────────────
+            'teamRacingWins'      => $pickCareer('teamRacingWins', $careerDeltas['teamRacingWinsDelta']),
+            'teamRacingCompleted' => $pickCareer('teamRacingCompleted', $careerDeltas['teamRacingCompletedDelta']),
+            'teamRacingPodiums'   => $pickCareer('teamRacingPodiums', $careerDeltas['teamRacingPodiumsDelta']),
+
+            // ── GT_TEAM_RACING_DM ────────────────────────────────────────
+            'teamRacingDmWins'      => $pickCareer('teamRacingDmWins', $careerDeltas['teamRacingDmWinsDelta']),
+            'teamRacingDmCompleted' => $pickCareer('teamRacingDmCompleted', $careerDeltas['teamRacingDmCompletedDelta']),
+            'teamRacingDmPodiums'   => $pickCareer('teamRacingDmPodiums', $careerDeltas['teamRacingDmPodiumsDelta']),
+
+            // ── GT_DOMINATION ────────────────────────────────────────────
+            'dominationWins'       => $pickCareer('dominationWins', $careerDeltas['dominationWinsDelta']),
+            'dominationCompleted'  => $pickCareer('dominationCompleted', $careerDeltas['dominationCompletedDelta']),
+            'dominationZoneHoldMs' => $pickCareer('dominationZoneHoldMs', $careerDeltas['dominationZoneHoldMsDelta']),
+
+            // ── GT_KOTH ──────────────────────────────────────────────────
+            'kothWins'       => $pickCareer('kothWins', $careerDeltas['kothWinsDelta']),
+            'kothCompleted'  => $pickCareer('kothCompleted', $careerDeltas['kothCompletedDelta']),
+            'kothZoneHoldMs' => $pickCareer('kothZoneHoldMs', $careerDeltas['kothZoneHoldMsDelta']),
+
+            // ── GT_AUTOBALL ──────────────────────────────────────────────
+            'autoballWins'      => $pickCareer('autoballWins', $careerDeltas['autoballWinsDelta']),
+            'autoballCompleted' => $pickCareer('autoballCompleted', $careerDeltas['autoballCompletedDelta']),
+            'autoballGoals'     => $mergeCareerCountField('autoballGoals', $careerDeltas['autoballGoalsDelta']),
+
+            'achievementTiers' => (array)($snap['achievementTiers'] ?? $existing['achievementTiers'] ?? []),
+            'lastSeen'         => $receivedAt,
+            'vehicle'          => $mostUsed,
+            'registeredAt'     => $existing['registeredAt'] ?? $receivedAt,
+            'lastIngestedMatchId' => ($isOutdatedBySeq && isset($existing['lastIngestedMatchId']) && is_string($existing['lastIngestedMatchId']))
+                ? $existing['lastIngestedMatchId']
+                : $matchId,
+            'lastIngestedAt' => ($isOutdatedBySeq && isset($existing['lastIngestedAt']) && is_string($existing['lastIngestedAt']))
+                ? $existing['lastIngestedAt']
+                : $receivedAt,
+            'lastIngestedMode' => ($isOutdatedBySeq && isset($existing['lastIngestedMode']) && is_string($existing['lastIngestedMode']))
+                ? $existing['lastIngestedMode']
+                : (string)$mode,
+            'lastServerMatchSeq' => ($isOutdatedBySeq && isset($existing['lastServerMatchSeq']) && ladder_parse_server_match_seq($existing['lastServerMatchSeq']) !== null)
+                ? (int)$existing['lastServerMatchSeq']
+                : $serverMatchSeq,
+            '_processedMatchIds'=> (function() use ($processedMatchIds, $matchId, $countThisMatch): array {
+                if ($countThisMatch && $matchId !== '') {
+                    $processedMatchIds[] = $matchId;
+                }
+                return array_slice(array_values(array_unique($processedMatchIds)), -200);
+            })(),
+            '_lastProcessedMatch' => [
+                'matchId' => ($isOutdatedBySeq && isset($existing['_lastProcessedMatch']['matchId']) && is_string($existing['_lastProcessedMatch']['matchId']))
+                    ? $existing['_lastProcessedMatch']['matchId']
+                    : $matchId,
+                'serverMatchSeq' => ($isOutdatedBySeq && isset($existing['_lastProcessedMatch']['serverMatchSeq']))
+                    ? $existing['_lastProcessedMatch']['serverMatchSeq']
+                    : $serverMatchSeq,
+                'timestamp' => ($isOutdatedBySeq && isset($existing['_lastProcessedMatch']['timestamp']) && is_string($existing['_lastProcessedMatch']['timestamp']))
+                    ? $existing['_lastProcessedMatch']['timestamp']
+                    : $receivedAt,
+                'mode' => ($isOutdatedBySeq && isset($existing['_lastProcessedMatch']['mode']) && is_string($existing['_lastProcessedMatch']['mode']))
+                    ? $existing['_lastProcessedMatch']['mode']
+                    : (string)$mode,
+                'checksum' => ($isOutdatedBySeq && isset($existing['_lastProcessedMatch']['checksum']) && is_string($existing['_lastProcessedMatch']['checksum']))
+                    ? $existing['_lastProcessedMatch']['checksum']
+                    : ($matchId !== '' ? profile_match_checksum($matchId, (string)$mode, $player) : ''),
+            ],
+        ];
+
+        profile_save($playerId, $profile);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MATCH INDEX
+// A single flat file (match_index.json) stores only the leaderboard-relevant
+// fields for every match. This avoids reading 30 000+ individual JSON files
+// on every page load.
+//
+// Index record structure (one entry per match):
+// {
+//   "matchId":     "69C1BCD6-...",
+//   "mode":        "GT_RACING_DM",
+//   "gametype":    1,
+//   "map":         "q3r_downtown",
+//   "startTime":   "2026-03-23T22:21:10",
+//   "source":      "online",
+//   "serverName":  "headcrab.party | Q3Rally 0.7",
+//   "playerCount": 4,
+//   "players": [
+//     { "name": "...", "score": 0, "bestLapMs": 0, "kills": 0, "deaths": 0,
+//       "position": 1, "isBot": false, "team": 0, "captures": 0,
+//       "damageDealt": 0, "totalRaceMs": 0 }
+//   ]
+// }
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function normalize_mode_value($mode): string
+{
+    if (!is_string($mode)) {
+        return '';
+    }
+    $trimmed = trim($mode);
+    if ($trimmed === '') {
+        return '';
+    }
+    $upper = strtoupper(str_replace([' ', '-'], '_', $trimmed));
+    if (strpos($upper, 'GT_') !== 0) {
+        $upper = 'GT_' . $upper;
+    }
+    return $upper;
+}
+
+function mode_is_race(string $mode): bool
+{
+    return in_array($mode, LADDER_RACE_MODES, true);
+}
+
+function mode_is_deathmatch_like(string $mode): bool
+{
+    return in_array($mode, LADDER_DEATHMATCH_MODES, true);
+}
+
+function mode_is_derby(string $mode): bool
+{
+    return in_array($mode, LADDER_DERBY_MODES, true);
+}
+
+function mode_is_survival(string $mode): bool
+{
+    return in_array($mode, LADDER_SURVIVAL_MODES, true);
+}
+
+function mode_is_objective(string $mode): bool
+{
+    return in_array($mode, LADDER_OBJECTIVE_MODES, true);
+}
+
+function mode_is_elimination(string $mode): bool
+{
+    return $mode === 'GT_ELIMINATION';
+}
+
+function first_numeric_value(array $source, array $fields): ?float
+{
+    foreach ($fields as $field) {
+        if (!array_key_exists($field, $source)) {
+            continue;
+        }
+        $value = $source[$field];
+        if (is_int($value) || is_float($value)) {
+            return (float) $value;
+        }
+        if (is_string($value) && is_numeric($value)) {
+            return (float) $value;
+        }
+    }
+    return null;
+}
+
+function extract_player_score(array $player): int
+{
+    $score = first_numeric_value($player, ['score', 'rawScore', 'playerScore']);
+    return (int) max(0, $score ?? 0);
+}
+
+function extract_player_kills(array $player, string $mode): int
+{
+    if (mode_is_race($mode)) {
+        return 0;
+    }
+    $kills = first_numeric_value($player, ['kills', 'frags', 'elims']);
+    if ($kills !== null) {
+        return (int) max(0, $kills);
+    }
+    // degraded mode for legacy payloads: kills were mirrored from score
+    if (mode_is_deathmatch_like($mode) || mode_is_objective($mode) || mode_is_derby($mode)) {
+        return extract_player_score($player);
+    }
+    return 0;
+}
+
+function extract_player_deaths(array $player, string $mode): int
+{
+    if (mode_is_race($mode)) {
+        return 0;
+    }
+    $deaths = first_numeric_value($player, ['deaths', 'deathCount']);
+    return (int) max(0, $deaths ?? 0);
+}
+
+function extract_player_position(array $player, string $mode): int
+{
+    if (mode_is_race($mode) || mode_is_elimination($mode)) {
+        $position = first_numeric_value($player, ['position', 'rank']);
+        return (int) max(0, $position ?? 0);
+    }
+    return 0;
+}
+
+function extract_player_race_time(array $player, string $mode): int
+{
+    if (!mode_is_race($mode) && !mode_is_elimination($mode) && !mode_is_survival($mode)) {
+        return 0;
+    }
+    $time = first_numeric_value($player, ['totalRaceMs', 'raceTimeMs', 'finishRaceTime', 'survivalMs']);
+    return (int) max(0, $time ?? 0);
+}
+
+function extract_player_zone_hold(array $player, string $mode): int
+{
+    if ($mode !== 'GT_DOMINATION' && $mode !== 'GT_KOTH') {
+        return 0;
+    }
+    $value = first_numeric_value($player, ['zoneHoldMs', 'zoneTimeMs']);
+    return (int) max(0, $value ?? 0);
+}
+
+function index_derive_winner(array $payload, string $mode): array
+{
+    // Mirrors the winner-detection logic of profile_upsert_from_payload().
+    // Returns ['winner' => string cleanName, 'winnerTeam' => int].
+    $teamModes = ['GT_TEAM', 'GT_TEAM_RACING', 'GT_TEAM_RACING_DM',
+                  'GT_CTF', 'GT_CTF4', 'GT_DOMINATION', 'GT_KOTH', 'GT_AUTOBALL'];
+    $isTeamMode = in_array($mode, $teamModes, true);
+    $isTeamRaceMode = in_array($mode, ['GT_TEAM_RACING', 'GT_TEAM_RACING_DM'], true);
+
+    $winnerClientNum = -1;
+    $hasWinnerClientNum = false;
+    foreach ([$payload, $payload['settings'] ?? []] as $src) {
+        if (!is_array($src)) continue;
+        if (array_key_exists('winnerClientNum', $src) && is_numeric($src['winnerClientNum'])) {
+            $winnerClientNum = (int)$src['winnerClientNum'];
+            $hasWinnerClientNum = $winnerClientNum >= 0;
+            break;
+        }
+    }
+
+    $clientToName = [];
+    $clientToTeam = [];
+    foreach ((array)($payload['players'] ?? []) as $cp) {
+        if (!is_array($cp)) continue;
+        $cn = (int)($cp['clientNum'] ?? -1);
+        if ($cn >= 0) {
+            $clientToName[$cn] = (string)($cp['cleanName'] ?? $cp['name'] ?? '');
+            $clientToTeam[$cn] = (int)($cp['team'] ?? 0);
+        }
+    }
+
+    if (!$isTeamMode) {
+        if (!$hasWinnerClientNum) {
+            foreach ((array)($payload['players'] ?? []) as $cp) {
+                if (!is_array($cp) || !empty($cp['isBot'])) continue;
+                if ((int)($cp['position'] ?? 0) === 1) {
+                    $winnerClientNum = (int)($cp['clientNum'] ?? -1);
+                    $hasWinnerClientNum = $winnerClientNum >= 0;
+                    break;
+                }
+            }
+        }
+        $name = ($hasWinnerClientNum && isset($clientToName[$winnerClientNum]))
+            ? $clientToName[$winnerClientNum] : '';
+        return ['winner' => $name, 'winnerTeam' => 0];
+    }
+
+    // Team racing uses lower aggregate team time. Team Racing DM already has
+    // frag bonuses applied to teamTimes by the engine.
+    $winnerTeamInt = 0;
+    if ($hasWinnerClientNum && isset($clientToTeam[$winnerClientNum])) {
+        $winnerTeamInt = $clientToTeam[$winnerClientNum];
+    } elseif ($isTeamRaceMode) {
+        $wt = profile_pick_winner_team_by_lowest_time(profile_collect_team_times($payload));
+        if ($wt !== null) {
+            foreach ((array)($payload['players'] ?? []) as $cp) {
+                if (!is_array($cp)) continue;
+                if (profile_normalize_team_label($cp['team'] ?? null) === $wt) {
+                    $winnerTeamInt = (int)($cp['team'] ?? 0);
+                    break;
+                }
+            }
+        }
+    }
+
+    if ($winnerTeamInt !== 0) {
+        return ['winner' => '', 'winnerTeam' => $winnerTeamInt];
+    }
+
+    // Remaining team modes: find winning team from team scores.
+    $teamScores = [];
+    if (isset($payload['teamScores']) && is_array($payload['teamScores'])) {
+        foreach ($payload['teamScores'] as $k => $v) {
+            if (is_numeric($v)) {
+                $tl = profile_normalize_team_label($k);
+                if ($tl !== '') $teamScores[$tl] = (float)$v;
+            }
+        }
+    }
+    foreach (['red', 'blue', 'green', 'yellow'] as $t) {
+        $f = $t . 'Score';
+        if (isset($payload[$f]) && is_numeric($payload[$f])) $teamScores[$t] = (float)$payload[$f];
+    }
+
+    if ($teamScores) {
+        $wt = profile_pick_winner_team_by_scores($teamScores);
+        if ($wt !== null) {
+            foreach ((array)($payload['players'] ?? []) as $cp) {
+                if (!is_array($cp)) continue;
+                if (profile_normalize_team_label($cp['team'] ?? null) === $wt) {
+                    $winnerTeamInt = (int)($cp['team'] ?? 0);
+                    break;
+                }
+            }
+        }
+    }
+
+    return ['winner' => '', 'winnerTeam' => $winnerTeamInt];
+}
+
+function index_extract_entry(array $payload): array
+{
+    $mode = normalize_mode_value($payload['mode'] ?? '');
+    $dedicated = $payload['server']['dedicated'] ?? null;
+    $source    = $payload['source'] ?? null;
+    if ($source !== 'online' && $source !== 'offline') {
+        $source = ($dedicated === true || $dedicated === 1 || $dedicated === '1') ? 'online' : 'offline';
+    }
+
+    $winnerInfo = index_derive_winner($payload, $mode);
+
+    $players = [];
+    foreach ((array)($payload['players'] ?? []) as $p) {
+        if (!is_array($p)) {
+            continue;
+        }
+        $score = extract_player_score($p);
+        $kills = extract_player_kills($p, $mode);
+        $players[] = [
+            'name'        => (string)($p['cleanName'] ?? $p['name'] ?? $p['displayName'] ?? ''),
+            'playerId'    => (string)($p['playerId'] ?? ''),
+            'score'       => $score,
+            'playerScore' => (function() use ($p): int {
+                // Prefer inline profile snapshot
+                if (isset($p['profile']['playerScore'])) {
+                    return (int)$p['profile']['playerScore'];
+                }
+                // Fallback: stored profile file
+                $playerId = (string)($p['playerId'] ?? '');
+                if ($playerId !== '') {
+                    $stored = profile_load($playerId);
+                    if ($stored && isset($stored['playerScore'])) {
+                        return (int)$stored['playerScore'];
+                    }
+                }
+                return 0;
+            })(),
+            'achievementTiers' => (function() use ($p): array {
+                // Prefer inline profile snapshot (present in recent matches)
+                if (isset($p['profile']['achievementTiers']) && is_array($p['profile']['achievementTiers'])) {
+                    return array_map('intval', $p['profile']['achievementTiers']);
+                }
+                // Fallback: load from stored profile file (covers old matches on rebuild)
+                $playerId = (string)($p['playerId'] ?? '');
+                if ($playerId !== '') {
+                    $stored = profile_load($playerId);
+                    if ($stored && isset($stored['achievementTiers']) && is_array($stored['achievementTiers'])) {
+                        return array_map('intval', $stored['achievementTiers']);
+                    }
+                }
+                return [];
+            })(),
+            'vehicle'     => (function() use ($p): string {
+                // vehicle field is often empty; fall back to model (e.g. "roadster/red" → "roadster")
+                $v = (string)($p['vehicle'] ?? $p['car'] ?? $p['vehicleModel'] ?? '');
+                if ($v === '') {
+                    $model = (string)($p['model'] ?? '');
+                    if ($model !== '') {
+                        $v = explode('/', $model)[0]; // strip skin suffix
+                    }
+                }
+                // try inline profile snapshot
+                if ($v === '') {
+                    $v = (string)($p['profile']['mostUsedVehicle'] ?? '');
+                }
+                // last resort: load stored profile file (covers old matches on rebuild)
+                if ($v === '') {
+                    $playerId = (string)($p['playerId'] ?? '');
+                    if ($playerId !== '') {
+                        $stored = profile_load($playerId);
+                        if ($stored) {
+                            $v = (string)($stored['vehicle'] ?? $stored['mostUsedVehicle'] ?? '');
+                        }
+                    }
+                }
+                return $v;
+            })(),
+            'bestLapMs'   => (int)($p['bestLapMs'] ?? 0),
+            'totalRaceMs' => extract_player_race_time($p, $mode),
+            'kills'       => $kills,
+            'deaths'      => extract_player_deaths($p, $mode),
+            'position'    => extract_player_position($p, $mode),
+            'isBot'       => (bool)($p['isBot'] ?? false),
+            'team'        => (int)($p['team'] ?? 0),
+            'captures'    => (int)($p['captures'] ?? 0),
+            'damageDealt' => (int)($p['damageDealt'] ?? 0),
+            'zoneHoldMs'  => extract_player_zone_hold($p, $mode),
+            'eliminationRound' => mode_is_elimination($mode) ? (int) max(0, first_numeric_value($p, ['eliminationRound']) ?? 0) : 0,
+            'eliminationPlayersRemaining' => mode_is_elimination($mode) ? (int) max(0, first_numeric_value($p, ['eliminationPlayersRemaining']) ?? 0) : 0,
+        ];
+    }
+
+    return [
+        'matchId'     => (string)($payload['matchId'] ?? ''),
+        'mode'        => $mode,
+        'gametype'    => (int)($payload['gametype'] ?? 0),
+        'map'         => (string)($payload['map'] ?? ''),
+        'startTime'   => (string)($payload['startTime'] ?? $payload['startTimeIso'] ?? ''),
+        'source'      => $source,
+        'serverName'  => (string)($payload['server']['name'] ?? ''),
+        'playerCount' => (int)($payload['playerCount'] ?? count($players)),
+        'winner'      => $winnerInfo['winner'],
+        'winnerTeam'  => $winnerInfo['winnerTeam'],
+        'players'     => $players,
+    ];
+}
+
+function index_load(): array
+{
+    if (!is_file(INDEX_FILE)) {
+        return [];
+    }
+    $raw = file_get_contents(INDEX_FILE);
+    if ($raw === false || $raw === '') {
+        return [];
+    }
+    $data = json_decode($raw, true);
+    return is_array($data) ? $data : [];
+}
+
+function index_save(array $entries): bool
+{
+    $json = json_encode($entries, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($json === false) {
+        return false;
+    }
+    return ladder_write_atomic(INDEX_FILE, $json);
+}
+
+function index_append(array $payload): void
+{
+    $entry   = index_extract_entry($payload);
+    $entries = index_load();
+
+    // Avoid duplicates
+    foreach ($entries as $existing) {
+        if (($existing['matchId'] ?? '') === $entry['matchId']) {
+            return;
+        }
+    }
+
+    $entries[] = $entry;
+    index_save($entries);
+}
+
+function index_remove(string $matchId): void
+{
+    $entries = index_load();
+    $entries = array_values(array_filter(
+        $entries,
+        static fn($e) => ($e['matchId'] ?? '') !== $matchId
+    ));
+    index_save($entries);
+}
+
+/**
+ * Rebuild the entire index from individual match files.
+ * Called lazily when the index is missing.
+ * Returns the rebuilt entries array.
+ */
+function index_rebuild(): array
+{
+    return ladder_locked('index_rebuild_unlocked');
+}
+
+function index_rebuild_unlocked(): array
+{
+    $files   = glob(DATA_DIR . '/*.json');
+    $entries = [];
+
+    if (!is_array($files)) {
+        return $entries;
+    }
+
+    foreach ($files as $file) {
+        $basename = basename($file);
+        // Skip non-match files
+        if ($basename === 'match_index.json' || $basename === 'version.json') {
+            continue;
+        }
+        if (strncmp($basename, LADDER_RATE_FILE_PREFIX, strlen(LADDER_RATE_FILE_PREFIX)) === 0) {
+            continue;
+        }
+        if ($basename === 'server_keys.json') {
+            continue;
+        }
+
+        $raw = file_get_contents($file);
+        if ($raw === false) {
+            continue;
+        }
+        $payload = json_decode($raw, true);
+        if (!is_array($payload)) {
+            continue;
+        }
+        $entries[] = index_extract_entry($payload);
+    }
+
+    index_save($entries);
+    return $entries;
+}
+
+/**
+ * Return the index entries, rebuilding lazily if missing.
+ */
+function index_get(): array
+{
+    if (!is_file(INDEX_FILE)) {
+        $allFiles   = glob(DATA_DIR . '/*.json') ?: [];
+        $matchFiles = array_filter($allFiles, static function($f) {
+            $b = basename($f);
+            return $b !== 'match_index.json'
+                && $b !== 'server_keys.json'
+                && strncmp($b, LADDER_RATE_FILE_PREFIX, strlen(LADDER_RATE_FILE_PREFIX)) !== 0;
+        });
+        if (count($matchFiles) === 0) {
+            return [];
+        }
+        return index_rebuild();
+    }
+    return index_load();
+}
+
+function handle_register_json(): void
+{
+    $body = ladder_read_body();
+    $data = json_decode($body, true);
+    if (!is_array($data)) { send_error(400, 'Invalid JSON body.'); }
+
+    $serverName = trim((string)($data['serverName'] ?? ''));
+    $ownerName  = trim((string)($data['ownerName']  ?? ''));
+    $ownerEmail = trim((string)($data['ownerEmail'] ?? ''));
+    $type       = strtolower(trim((string)($data['type'] ?? 'server'))) === 'offline' ? 'offline' : 'server';
+
+    if ($serverName === '') { send_error(400, 'serverName is required.'); }
+    if ($ownerName  === '') { send_error(400, 'ownerName is required.'); }
+    if (strlen($serverName) > 64 || strlen($ownerName) > 64 || strlen($ownerEmail) > 254) {
+        send_error(400, 'Field too long.', 'FIELD_TOO_LONG');
+    }
+    if (!keys_register_rate_ok()) {
+        send_error(429, 'Too many registrations. Try again later.', 'RATE_LIMITED');
+    }
+
+    // Every key starts as a request the admin has to approve (admin.php).
+    // Keys that were active right after registration could report and
+    // delete matches without anybody having looked at them.
+    $key    = bin2hex(random_bytes(32));
+    $record = [
+        'key'        => $key,
+        'serverName' => $serverName,
+        'ownerName'  => $ownerName,
+        'ownerEmail' => $ownerEmail,
+        'type'       => $type,
+        'status'     => 'pending',
+        'createdAt'  => gmdate('c'),
+        'approvedAt' => null,
+        'lastUsedAt' => null,
+        'lastUsedIp' => null,
+        'matchCount' => 0,
+    ];
+    keys_append($record);
+
+    header('Content-Type: application/json');
+    http_response_code(201);
+    echo json_encode(['key' => $key, 'serverName' => $serverName, 'status' => $record['status'], 'type' => $type], JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function normalize_ingest_payload(array $payload): array
+{
+    $payload['mode'] = normalize_mode_value($payload['mode'] ?? '');
+    if ($payload['mode'] === '') {
+        throw new LadderApiException(422, 'MODE_REQUIRED', 'mode is required.');
+    }
+
+    if (!isset($payload['players']) || !is_array($payload['players'])) {
+        throw new LadderApiException(422, 'PLAYERS_REQUIRED', 'players must be a non-empty array.');
+    }
+
+    $normalizedPlayers = [];
+    foreach ($payload['players'] as $index => $player) {
+        if (!is_array($player)) {
+            continue;
+        }
+
+        $player['score'] = extract_player_score($player);
+        $player['kills'] = extract_player_kills($player, $payload['mode']);
+        $player['deaths'] = extract_player_deaths($player, $payload['mode']);
+        $player['totalRaceMs'] = extract_player_race_time($player, $payload['mode']);
+        $player['position'] = extract_player_position($player, $payload['mode']);
+        $player['zoneHoldMs'] = extract_player_zone_hold($player, $payload['mode']);
+
+        // mode-specific neutralization (new semantics first, legacy-compatible)
+        if (!mode_is_race($payload['mode']) && !mode_is_elimination($payload['mode'])) {
+            $player['bestLapMs'] = 0;
+            $player['lapCount'] = 0;
+            $player['lapTimes'] = [];
+        }
+        if (!mode_is_elimination($payload['mode'])) {
+            $player['eliminationRound'] = 0;
+            $player['eliminationPlayersRemaining'] = 0;
+            $player['eliminationMetric'] = 0;
+        }
+        if ($payload['mode'] !== 'GT_DOMINATION' && $payload['mode'] !== 'GT_KOTH') {
+            $player['zoneHoldMs'] = 0;
+            $player['zoneActiveSigil'] = -1;
+        }
+        if (mode_is_race($payload['mode'])) {
+            $player['kills'] = 0;
+            $player['deaths'] = 0;
+        }
+
+        $normalizedPlayers[$index] = $player;
+    }
+
+    $payload['players'] = array_values($normalizedPlayers);
+    $payload['playerCount'] = count($payload['players']);
+    return $payload;
+}
+
+function handle_post(array $segments): void
+{
+    if ($segments === ['register']) {
+        handle_register_json();
+        return;
+    }
+
+    if ($segments === ['ghosts']) {
+        handle_ghost_post();
+        return;
+    }
+
+    if ($segments !== ['matches']) {
+        send_error(404, 'Endpoint not found.');
+    }
+
+    $payload = json_decode(ladder_read_body(), true);
+    if (!is_array($payload)) {
+        throw new LadderApiException(400, 'INVALID_JSON', 'Invalid JSON payload.');
+    }
+
+    $payload = normalize_ingest_payload($payload);
+
+    // Auth: verify Bearer token against registered server keys.
+    // Server name in payload must match the registered name for this key.
+    $serverName = '';
+    if (isset($payload['server']['name']) && is_string($payload['server']['name'])) {
+        $serverName = $payload['server']['name'];
+    }
+    $keyRecord = keys_require_auth($serverName);
+
+    if (!isset($payload['matchId']) || !is_string($payload['matchId']) || trim($payload['matchId']) === '') {
+        throw new LadderApiException(422, 'MATCH_ID_REQUIRED', 'matchId is required.');
+    }
+
+    $matchId = normalize_match_id($payload['matchId']);
+    if (!match_id_is_allowed($matchId)) {
+        throw new LadderApiException(422, 'MATCH_ID_INVALID', 'matchId contains unsupported characters or is reserved.');
+    }
+    if (array_key_exists('serverMatchSeq', $payload)) {
+        $serverMatchSeq = ladder_parse_server_match_seq($payload['serverMatchSeq']);
+        if ($serverMatchSeq === null) {
+            throw new LadderApiException(422, 'SERVER_MATCH_SEQ_INVALID', 'serverMatchSeq must be a positive integer.');
+        }
+        $payload['serverMatchSeq'] = $serverMatchSeq;
+    }
+
+    $playerCount = (int)($payload['playerCount'] ?? count((array)($payload['players'] ?? [])));
+    if ($playerCount <= 0) {
+        throw new LadderApiException(422, 'PLAYERS_EMPTY', 'No ingestable players found in payload.');
+    }
+
+    $matchPath = DATA_DIR . '/' . $matchId . '.json';
+    if (file_exists($matchPath)) {
+        send_json(['matchId' => $payload['matchId']], 200);
+        return;
+    }
+
+    if (keys_is_offline($keyRecord)) {
+        $payload = offline_match_restrict_players($payload, $keyRecord, $matchId);
+    }
+
+    $payload['receivedAt'] = gmdate('c');
+
+    // Normalize dedicated flag → source field for frontend filtering.
+    // Offline keys (in-game wizard) always report offline matches, whatever
+    // the payload claims.
+    $dedicated = $payload['server']['dedicated'] ?? null;
+    $payload['source'] = (!keys_is_offline($keyRecord)
+        && ($dedicated === true || $dedicated === 1 || $dedicated === '1'))
+        ? 'online'
+        : 'offline';
+    // Which key reported the match (non-secret id, never published):
+    // only that key may delete it again.
+    $payload['ingestKeyId'] = keys_key_id((string)($keyRecord['key'] ?? ''));
+
+    $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    if ($json === false) {
+        throw new LadderApiException(500, 'ENCODE_FAILED', 'Failed to encode payload.');
+    }
+
+    if (!ladder_write_atomic($matchPath, $json . "\n")) {
+        throw new LadderApiException(500, 'PERSIST_FAILED', 'Unable to persist match.');
+    }
+
+    // Update leaderboard index
+    index_append($payload);
+
+    if (isset($payload['players']) && is_array($payload['players'])) {
+        foreach ($payload['players'] as $player) {
+            if (!is_array($player)) {
+                continue;
+            }
+            $playerId = (string)($player['playerId'] ?? '');
+            if ($playerId === '' || !profile_is_valid_uuid($playerId)) {
+                continue;
+            }
+
+            $snapshotPresent = isset($player['profile']) && is_array($player['profile']) && !empty($player['profile']['valid']);
+            $existingProfile = profile_load($playerId) ?? [];
+            $existingWins = (int)($existingProfile['wins'] ?? 0);
+            $processedMatchIds = profile_normalize_processed_match_ids($existingProfile);
+            $alreadyCounted = $matchId !== '' && in_array($matchId, $processedMatchIds, true);
+
+            ladder_pipeline_log('php-handle_post-player', [
+                'matchId' => $matchId,
+                'playerId' => $playerId,
+                'alreadyCounted' => $alreadyCounted,
+                'snapshotPresent' => $snapshotPresent,
+                'existingWins' => $existingWins,
+                'deltaWins' => 0,
+                'newWins' => $existingWins,
+            ]);
+        }
+    }
+
+    // Update player profiles
+    profile_upsert_from_payload($payload);
+
+    send_json(['matchId' => $payload['matchId']], 201);
+}
+
+/**
+ * Offline keys report for their own player only (keys_offline_player): a
+ * match with exactly one human player binds an unbound key to that player.
+ * Human players other than the bound one stay in the match, but without
+ * player id and profile snapshot, so no profile is credited for them.
+ */
+function offline_match_restrict_players(array $payload, array $keyRecord, string $matchId): array
+{
+    $humans = [];
+    foreach ((array)($payload['players'] ?? []) as $player) {
+        if (!is_array($player) || !empty($player['isBot'])) {
+            continue;
+        }
+        $id = strtolower((string)($player['playerId'] ?? ''));
+        if (profile_is_valid_uuid($id)) {
+            $humans[$id] = true;
+        }
+    }
+    $candidate = count($humans) === 1 ? (string)array_key_first($humans) : '';
+    $bound = keys_offline_player($keyRecord, $candidate);
+
+    $dropped = 0;
+    foreach ($payload['players'] as $i => $player) {
+        if (!is_array($player) || !empty($player['isBot'])) {
+            continue;
+        }
+        $id = strtolower((string)($player['playerId'] ?? ''));
+        if ($id !== '' && $id !== $bound) {
+            unset($payload['players'][$i]['playerId'], $payload['players'][$i]['profile'], $payload['players'][$i]['guid']);
+            $dropped++;
+        }
+    }
+    if ($dropped > 0) {
+        ladder_pipeline_log('php-offline-player-dropped', [
+            'matchId' => $matchId,
+            'dropped' => $dropped,
+            'bound'   => $bound !== '' ? 'yes' : 'no',
+        ]);
+    }
+    return $payload;
+}
+
+function normalize_api_segments(array $segments): array
+{
+    if (count($segments) >= 2 &&
+        strcasecmp($segments[0], 'api') === 0 &&
+        strcasecmp($segments[1], 'v1') === 0) {
+        return array_slice($segments, 2);
+    }
+
+    return $segments;
+}
+
+function handle_get(array $segments): void
+{
+    if ($segments === ['maps', 'metadata']) {
+        $entries = load_arena_metadata();
+        $normalized = [];
+        foreach ($entries as $map => $longname) {
+            if (!is_string($map) || !is_string($longname)) {
+                continue;
+            }
+            $normalizedKey = normalize_map_key($map);
+            if ($normalizedKey === '') {
+                continue;
+            }
+            $label = trim($longname);
+            if ($label === '') {
+                continue;
+            }
+            $normalized[$normalizedKey] = $label;
+        }
+
+        ksort($normalized, SORT_NATURAL | SORT_FLAG_CASE);
+
+        send_json(['maps' => $normalized], 200);
+        return;
+    }
+
+    // Levelshot manifest – scan images/ directory once, return available files
+    if ($segments === ['maps', 'levelshots']) {
+        $imageDir = __DIR__ . '/images';
+        $manifest = [];
+        if (is_dir($imageDir)) {
+            $allowed = ['webp', 'png', 'jpg', 'jpeg', 'tga'];
+            foreach (scandir($imageDir) ?: [] as $file) {
+                if ($file === '.' || $file === '..') {
+                    continue;
+                }
+                $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+                if (!in_array($ext, $allowed, true)) {
+                    continue;
+                }
+                $base = strtolower(pathinfo($file, PATHINFO_FILENAME));
+                // Only keep the first (best) extension per map name
+                if (!isset($manifest[$base])) {
+                    $manifest[$base] = $ext;
+                }
+            }
+        }
+        header('Content-Type: application/json');
+        header('Cache-Control: public, max-age=300');
+        echo json_encode($manifest, JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+
+    // Lap ghosts: ranking list and single ghost (see ghosts.php)
+    if ($segments === ['ghosts']) {
+        handle_ghost_list();
+        return;
+    }
+    if ($segments === ['ghosts', 'catalog']) {
+        handle_ghost_catalog();
+        return;
+    }
+    if (count($segments) === 2 && $segments[0] === 'ghosts') {
+        handle_ghost_get($segments[1]);
+        return;
+    }
+
+    // Fast leaderboard index endpoint – returns only fields needed by the frontend
+    if ($segments === ['matches', 'index']) {
+        $entries = index_get();
+        header('Content-Type: application/json');
+        header('Cache-Control: public, max-age=30');
+        echo json_encode(['matches' => array_values($entries), 'count' => count($entries)], JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+
+    if ($segments === ['matches']) {
+        $header   = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+        $provided = strncasecmp($header, 'Bearer ', 7) === 0 ? trim(substr($header, 7)) : '';
+        if ($provided === '') {
+            send_error(401, 'Authorization required.');
+        }
+        $record = keys_find_by_key($provided);
+        if ($record === null || ($record['status'] ?? '') !== 'active') {
+            send_error(403, 'Invalid or inactive API key.');
+        }
+        $mode = $_GET['mode'] ?? null;
+        $modeFilter = is_string($mode) && $mode !== '' ? $mode : null;
+
+        $offset = isset($_GET['offset']) ? max(0, (int) $_GET['offset']) : 0;
+        $limitParam = $_GET['limit'] ?? null;
+        $limit = null;
+        $shouldStreamAll = false;
+        if (is_string($limitParam) && strcasecmp($limitParam, 'all') === 0) {
+            $shouldStreamAll = true;
+        } else {
+            $limit = $limitParam !== null ? max(1, (int) $limitParam) : 100;
+        }
+
+        if ($shouldStreamAll) {
+            stream_all_matches($offset, $modeFilter);
+            return;
+        }
+
+        $matches = load_matches($offset, $limit, $modeFilter);
+
+        send_json(['matches' => array_values($matches)], 200);
+        return;
+    }
+
+    // Player profile endpoint
+    if (count($segments) === 2 && $segments[0] === 'players') {
+        $playerId = $segments[1];
+        if ($playerId === '') {
+            send_error(400, 'Player ID required.');
+        }
+        $profile = profile_load($playerId);
+
+        // If UUID lookup failed, try name-based fallback (e.g. when match index
+        // was built before playerId fields were added and still contains names).
+        if ($profile === null && !profile_is_valid_uuid($playerId)) {
+            $nameLower = mb_strtolower($playerId);
+            foreach (glob(PROFILES_DIR . '/*.json') ?: [] as $file) {
+                $raw = file_get_contents($file);
+                if ($raw === false) continue;
+                $candidate = json_decode($raw, true);
+                if (!is_array($candidate)) continue;
+                $cn = mb_strtolower((string)($candidate['cleanName'] ?? $candidate['displayName'] ?? $candidate['name'] ?? ''));
+                if ($cn === $nameLower) {
+                    $profile = $candidate;
+                    break;
+                }
+            }
+        }
+
+        if ($profile === null) {
+            send_error(404, 'Player not found.');
+        }
+        $profile = profile_hydrate_ingest_metadata($profile);
+        header('Content-Type: application/json');
+        header('Cache-Control: public, max-age=60');
+        echo json_encode($profile, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    if (count($segments) === 2 && $segments[0] === 'matches') {
+        $matchId = normalize_match_id($segments[1]);
+        $payload = match_load_stored($matchId);
+        if ($payload === null) {
+            send_error(404, 'Match not found.');
+        }
+
+        send_json(sanitize_public_match_payload($payload), 200);
+        return;
+    }
+
+    send_error(404, 'Endpoint not found.');
+}
+
+function handle_delete(array $segments, array $keyRecord): void
+{
+    if (count($segments) !== 2 || $segments[0] !== 'matches') {
+        send_error(404, 'Endpoint not found.');
+    }
+
+    if (keys_is_offline($keyRecord)) {
+        send_error(403, 'Offline keys cannot delete matches.', 'DELETE_FORBIDDEN');
+    }
+
+    $matchId = normalize_match_id($segments[1]);
+    $payload = match_load_stored($matchId);
+    if ($payload === null) {
+        send_error(404, 'Match not found.');
+    }
+
+    // Only the key that reported the match may delete it. Matches stored
+    // before 1.0.13 carry no reporter and can only be removed on the server.
+    $owner = (string)($payload['ingestKeyId'] ?? '');
+    if ($owner === '' || !hash_equals($owner, keys_key_id((string)($keyRecord['key'] ?? '')))) {
+        send_error(403, 'Only the server that reported a match can delete it.', 'DELETE_FORBIDDEN');
+    }
+
+    if (!unlink(DATA_DIR . '/' . $matchId . '.json')) {
+        throw new RuntimeException('Failed to delete match.');
+    }
+
+    // Remove from leaderboard index
+    index_remove($matchId);
+
+    http_response_code(204);
+}
+
+function load_arena_metadata(): array
+{
+    if (!is_dir(ARENA_DIR)) {
+        return [];
+    }
+
+    $files = glob(ARENA_DIR . '/*.arena');
+    if ($files === false) {
+        return [];
+    }
+
+    $maps = [];
+    foreach ($files as $file) {
+        if (!is_file($file)) {
+            continue;
+        }
+
+        $contents = file_get_contents($file);
+        if ($contents === false || $contents === '') {
+            continue;
+        }
+
+        $length = strlen($contents);
+        $depth = 0;
+        $buffer = '';
+
+        for ($i = 0; $i < $length; $i++) {
+            $char = $contents[$i];
+
+            if ($char === '{') {
+                if ($depth === 0) {
+                    $buffer = '';
+                } else {
+                    $buffer .= $char;
+                }
+                $depth++;
+                continue;
+            }
+
+            if ($char === '}') {
+                if ($depth === 0) {
+                    continue;
+                }
+                $depth--;
+                if ($depth === 0) {
+                    $map = extract_arena_value($buffer, 'map');
+                    $longname = extract_arena_value($buffer, 'longname');
+                    if ($map !== null && $longname !== null) {
+                        $maps[$map] = $longname;
+                    }
+                    $buffer = '';
+                    continue;
+                }
+            }
+
+            if ($depth >= 1) {
+                $buffer .= $char;
+            }
+        }
+    }
+
+    return $maps;
+}
+
+function extract_arena_value(string $block, string $key): ?string
+{
+    $normalized = str_replace(["\r\n", "\r"], "\n", $block);
+    $lines = explode("\n", $normalized);
+
+    foreach ($lines as $line) {
+        if (!is_string($line)) {
+            continue;
+        }
+
+        $trimmedLine = trim($line);
+        if ($trimmedLine === '' || strncmp($trimmedLine, '//', 2) === 0) {
+            continue;
+        }
+
+        if (strncasecmp($trimmedLine, $key, strlen($key)) !== 0) {
+            continue;
+        }
+
+        $valuePart = trim(substr($trimmedLine, strlen($key)));
+        if ($valuePart === '') {
+            continue;
+        }
+
+        $firstChar = $valuePart[0];
+        if ($firstChar === '"' || $firstChar === "'") {
+            $quote = $firstChar;
+            $value = '';
+            $escaped = false;
+            $valueLength = strlen($valuePart);
+            for ($i = 1; $i < $valueLength; $i++) {
+                $char = $valuePart[$i];
+                if ($escaped) {
+                    $value .= $char;
+                    $escaped = false;
+                    continue;
+                }
+                if ($char === '\\') {
+                    $escaped = true;
+                    continue;
+                }
+                if ($char === $quote) {
+                    break;
+                }
+                $value .= $char;
+            }
+
+            $decoded = stripcslashes($value);
+            $trimmedValue = trim($decoded);
+            if ($trimmedValue !== '') {
+                return $trimmedValue;
+            }
+        } else {
+            $end = strcspn($valuePart, " \t");
+            $candidate = $end === strlen($valuePart) ? $valuePart : substr($valuePart, 0, $end);
+            $candidate = trim($candidate);
+            if ($candidate !== '') {
+                return $candidate;
+            }
+        }
+    }
+
+    return null;
+}
+
+function stream_all_matches(int $offset, ?string $modeFilter): void
+{
+    http_response_code(200);
+    header('Content-Type: application/json');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+
+    $out = fopen('php://output', 'wb');
+    if ($out === false) {
+        throw new RuntimeException('Failed to open output stream.');
+    }
+
+    fwrite($out, '{"matches":[');
+
+    $first = true;
+    $skipped = 0;
+    $normalizedMode = $modeFilter !== null ? $modeFilter : null;
+
+    foreach (list_match_files() as $file) {
+        $payload = decode_match_file($file);
+        if ($payload === null) {
+            continue;
+        }
+
+        if ($normalizedMode !== null) {
+            $payloadMode = isset($payload['mode']) ? (string) $payload['mode'] : '';
+            if ($payloadMode === '' || strcasecmp($payloadMode, $normalizedMode) !== 0) {
+                continue;
+            }
+        }
+
+        if ($skipped < $offset) {
+            $skipped++;
+            continue;
+        }
+
+        $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($json === false) {
+            continue;
+        }
+
+        if ($first) {
+            $first = false;
+        } else {
+            fwrite($out, ',');
+        }
+
+        fwrite($out, $json);
+    }
+
+    fwrite($out, ']}');
+    fflush($out);
+    fclose($out);
+    exit;
+}
+
+function load_matches(int $offset, ?int $limit, ?string $modeFilter): array
+{
+    $files = list_match_files();
+    if ($modeFilter === null) {
+        $slice = $limit === null ? array_slice($files, $offset) : array_slice($files, $offset, $limit);
+        return decode_match_files($slice);
+    }
+
+    $matches = [];
+    $skipped = 0;
+    $normalizedMode = $modeFilter;
+    $collected = 0;
+
+    foreach ($files as $file) {
+        $payload = decode_match_file($file);
+        if ($payload === null) {
+            continue;
+        }
+
+        $payloadMode = isset($payload['mode']) ? (string) $payload['mode'] : '';
+        if ($payloadMode === '' || strcasecmp($payloadMode, $normalizedMode) !== 0) {
+            continue;
+        }
+
+        if ($skipped < $offset) {
+            $skipped++;
+            continue;
+        }
+
+        $matches[] = $payload;
+        $collected++;
+
+        if ($limit !== null && $collected >= $limit) {
+            break;
+        }
+    }
+
+    return $matches;
+}
+
+function list_match_files(): array
+{
+    $files = glob(DATA_DIR . '/*.json');
+    if ($files === false) {
+        return [];
+    }
+
+    $filtered = array_filter($files, static function ($file) {
+        if (!is_string($file) || $file === '') {
+            return false;
+        }
+        if (!is_file($file)) {
+            return false;
+        }
+        $basename = basename($file);
+        $basename = basename($file);
+        if ($basename === 'server_keys.json') return false;
+        if ($basename === 'match_index.json') return false;
+        if ($basename === 'version.json')     return false;
+        if (strncmp($basename, LADDER_RATE_FILE_PREFIX, strlen(LADDER_RATE_FILE_PREFIX)) === 0) return false;
+        return true;
+    });
+
+    usort($filtered, static function ($a, $b) {
+        $timeA = @filemtime($a);
+        $timeB = @filemtime($b);
+        $timeA = $timeA === false ? 0 : $timeA;
+        $timeB = $timeB === false ? 0 : $timeB;
+        if ($timeA === $timeB) {
+            return strcmp($b, $a);
+        }
+
+        return $timeB <=> $timeA;
+    });
+
+    return array_values($filtered);
+}
+
+function decode_match_files(array $files): array
+{
+    $matches = [];
+    foreach ($files as $file) {
+        $payload = decode_match_file($file);
+        if ($payload !== null) {
+            $matches[] = $payload;
+        }
+    }
+
+    return $matches;
+}
+
+function decode_match_file(string $file): ?array
+{
+    $json = file_get_contents($file);
+    if ($json === false) {
+        return null;
+    }
+
+    $payload = json_decode($json, true);
+    if (!is_array($payload)) {
+        return null;
+    }
+
+    return sanitize_public_match_payload($payload);
+}
+
+/**
+ * Strip fields that must never appear in public GET responses.
+ * – server.key  : the API key used for upload authentication
+ * – players[].guid    : hardware identifier
+ * – players[].profile : career snapshot (belongs to the profile endpoint only)
+ */
+function sanitize_public_match_payload(array $payload): array
+{
+    unset($payload['ingestKeyId']);
+
+    if (isset($payload['server']) && is_array($payload['server'])) {
+        unset($payload['server']['key']);
+    }
+
+    if (isset($payload['players']) && is_array($payload['players'])) {
+        foreach ($payload['players'] as &$player) {
+            if (!is_array($player)) continue;
+            unset($player['guid'], $player['profile']);
+        }
+        unset($player);
+    }
+
+    return $payload;
+}
+
+function normalize_match_id(string $raw): string
+{
+    $normalized = preg_replace('/[^A-Za-z0-9._-]/', '_', $raw);
+    return trim((string) $normalized);
+}
+
+/**
+ * Match ids become data/<id>.json. Ids that name one of the service's own
+ * files in data/ (index, rate limit state, old key file location) or start
+ * with a dot are never a match.
+ */
+function match_id_is_allowed(string $matchId): bool
+{
+    if ($matchId === '' || strlen($matchId) > 200 || $matchId[0] === '.') {
+        return false;
+    }
+    $lower = strtolower($matchId);
+    if (in_array($lower, ['server_keys', 'match_index', 'version'], true)) {
+        return false;
+    }
+    return strncmp($lower, LADDER_RATE_FILE_PREFIX, strlen(LADDER_RATE_FILE_PREFIX)) !== 0;
+}
+
+/** A stored match by normalized id, or null when there is no such match. */
+function match_load_stored(string $matchId): ?array
+{
+    if (!match_id_is_allowed($matchId)) {
+        return null;
+    }
+    $matchPath = DATA_DIR . '/' . $matchId . '.json';
+    if (!is_file($matchPath) || !is_readable($matchPath)) {
+        return null;
+    }
+    $json = file_get_contents($matchPath);
+    if ($json === false) {
+        throw new RuntimeException('Failed to read match.');
+    }
+    $payload = json_decode($json, true);
+    if (!is_array($payload) || !isset($payload['matchId']) || !is_string($payload['matchId'])) {
+        return null;
+    }
+    return $payload;
+}
+
+function normalize_map_key(string $raw): string
+{
+    $lower = strtolower($raw);
+    $normalized = preg_replace('/[^a-z0-9._-]+/', '_', $lower);
+    if ($normalized === null) {
+        return '';
+    }
+
+    return trim((string) $normalized, '_');
+}
+
+function send_json(array $payload, int $statusCode): void
+{
+    http_response_code($statusCode);
+    header('Content-Type: application/json');
+    echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+function send_error(int $statusCode, string $message, string $code = 'ERROR', array $details = []): void
+{
+    $payload = [
+        'error' => [
+            'code' => $code,
+            'message' => $message,
+        ],
+    ];
+    if (!empty($details)) {
+        $payload['error']['details'] = $details;
+    }
+    send_json($payload, $statusCode);
+}
