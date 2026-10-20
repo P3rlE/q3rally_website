@@ -38,6 +38,7 @@ and test authentication adapters; they never modify the production dataset.
 node --test tests/*.test.cjs tests/*.test.mjs
 python3 tests/counter_test.py
 python3 tests/content_upload_test.py
+python3 tests/ladder-ranks_test.py
 bash -n webhook/build-queue.sh
 ```
 

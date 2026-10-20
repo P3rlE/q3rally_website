@@ -4,6 +4,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/profile-ranks.php';
+
 // ── CORS ──────────────────────────────────────────────────────────────────────
 $allowedOrigins = ['https://www.q3rally.com', 'https://q3rally.com'];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -5663,14 +5665,6 @@ try {
 // local client includes a profile snapshot.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Rank table mirrored from profile_shared.h PROFILE_RANK_TABLE
-const LADDER_RANK_NAMES = [
-    'Rookie Driver', 'Street Newbie', 'Weekend Racer', 'Track Learner',
-    'Amateur Racer', 'Street Racer', 'Semi-Pro Driver', 'Pro Racer',
-    'Elite Driver', 'Track Dominator', 'Master of Speed', 'Racing Legend',
-    'Asphalt King', 'Grand Champion', 'Q3Rally Icon'
-];
-
 // Achievement category names mirrored from bg_achievements.c
 const LADDER_ACHIEVEMENT_NAMES = [
     'Distance Driven', 'Kills', 'Races Won', 'Sprint Wins',
@@ -5695,11 +5689,12 @@ function profile_load(string $playerId): ?array
         return null;
     }
     $data = json_decode($raw, true);
-    return is_array($data) ? $data : null;
+    return is_array($data) ? profile_with_score_rank($data) : null;
 }
 
 function profile_save(string $playerId, array $data): void
 {
+    $data = profile_with_score_rank($data);
     if (!is_dir(PROFILES_DIR)) {
         mkdir(PROFILES_DIR, 0775, true);
     }
@@ -7479,7 +7474,7 @@ function handle_get(array $segments): void
         if ($profile === null) {
             send_error(404, 'Player not found.');
         }
-        $profile = profile_hydrate_ingest_metadata($profile);
+        $profile = profile_with_score_rank(profile_hydrate_ingest_metadata($profile));
         header('Content-Type: application/json');
         header('Cache-Control: public, max-age=60');
         echo json_encode($profile, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);

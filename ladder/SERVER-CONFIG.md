@@ -22,3 +22,7 @@ the administrator password. The exported keys.php retains the existing
 
 `data/` is runtime state, including authentication keys and player/match data;
 it is excluded from this repository and needs a separate server backup.
+
+SOURCE-EXPORT.json records checksums of the initial sanitized import. Subsequent
+source changes are recorded in Git; these baseline hashes are not a live deployment
+manifest. Profile rank calculation is documented in ../docs/ladder-ranks.md.
