@@ -56,6 +56,13 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
         <button class="src-btn" data-src="offline">OFFLINE</button>
       </div>
     </div>
+    <div class="source-toggle weather-toggle" role="group" aria-label="Track weather">
+      <button class="weather-btn src-btn active" data-weather="all" aria-pressed="true">ANY WEATHER</button>
+      <button class="weather-btn src-btn" data-weather="dry" aria-pressed="false">DRY</button>
+      <button class="weather-btn src-btn" data-weather="wet" aria-pressed="false">WET</button>
+      <button class="weather-btn src-btn" data-weather="snow" aria-pressed="false">SNOW</button>
+      <button class="weather-btn src-btn" data-weather="mixed" aria-pressed="false">MIXED</button>
+    </div>
     <div class="lb-body">
       <div class="map-panel">
         <div class="map-panel-label">MAP</div>
@@ -194,6 +201,8 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
   .top-bar-right { display: flex; align-items: center; gap: 16px; color: var(--gray); font-size: 10px; }
   .hl { color: var(--orange); }
 
+  .weather-label { color: var(--orange); font-family: 'Share Tech Mono', monospace; font-size: 11px; }
+
   /* PAGE HEADER */
   .page-header { background-color: var(--dark); background-image: var(--stripe); padding: 56px 80px 52px; display: flex; align-items: flex-end; justify-content: space-between; border-bottom: 1px solid #222; flex-wrap: wrap; gap: 32px; }
   .section-label { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 14px; }
@@ -226,6 +235,7 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
   .mode-tab:hover { color: var(--white); }
   .mode-tab.active { color: var(--orange); border-bottom-color: var(--orange); }
   .source-toggle { display: flex; gap: 0; align-items: center; padding: 12px 0; flex-shrink: 0; border-left: 1px solid #1a1a1a; padding-left: 24px; }
+  .source-toggle.weather-toggle { padding: 0 24px 16px; flex-wrap: wrap; border-left: none; width: 100%; }
   .src-btn { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gray); padding: 5px 12px; border: 1px solid #252525; background: none; cursor: pointer; transition: color 0.15s, border-color 0.15s, background 0.15s; margin-left: -1px; }
   .src-btn.active { color: var(--orange); border-color: var(--orange); background: rgba(255,85,0,0.05); z-index: 1; position: relative; }
 
@@ -445,8 +455,22 @@ const MODE_LABELS = {
 const RACE_MODES = new Set(['GT_RACING','GT_RACING_DM','GT_SPRINT','GT_TEAM_RACING','GT_TEAM_RACING_DM']);
 
 let allMatches = [], mapMeta = {}, levelshotManifest = {};
-let activeSrc = 'all', activeMode = '', activeMap = '';
+let activeSrc = 'all', activeWeather = 'all', activeMode = '', activeMap = '';
 let rankingsSort = 'wins', rankingsSearch = '';
+
+// The index uses a string; the full match payload uses weather.condition.
+// Older matches count as dry, matching the standalone Ladder.
+function matchWeather(match) {
+  const raw = typeof match?.weather === 'object' ? match.weather?.condition : match?.weather;
+  const condition = String(raw || '').trim().toLowerCase();
+  return ['wet', 'snow', 'mixed'].includes(condition) ? condition : 'dry';
+}
+function weatherLabel(match) {
+  return { dry: 'Dry', wet: 'Wet', snow: 'Snow', mixed: 'Mixed' }[matchWeather(match)];
+}
+function matchesWeather(match, weather) {
+  return weather === 'all' || matchWeather(match) === weather;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function canonMode(raw) {
@@ -559,15 +583,27 @@ function setupTabs() {
       document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
     });
   });
-  document.querySelectorAll('.src-btn').forEach(btn => {
+  document.querySelectorAll('.src-btn[data-src]').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.src-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.src-btn[data-src]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       activeSrc = btn.dataset.src;
       renderLeaderboard();
     });
   });
 }
+
+document.querySelectorAll('.weather-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    activeWeather = btn.dataset.weather;
+    document.querySelectorAll('.weather-btn').forEach(b => {
+      const selected = b === btn;
+      b.classList.toggle('active', selected);
+      b.setAttribute('aria-pressed', String(selected));
+    });
+    renderLeaderboard();
+  });
+});
 
 // ── Mode tabs ─────────────────────────────────────────────────────────────────
 function buildModeTabs() {
@@ -604,7 +640,7 @@ function getFiltered() {
   return allMatches.filter(m => {
     if (activeSrc === 'online' && m.source === 'offline') return false;
     if (activeSrc === 'offline' && m.source !== 'offline') return false;
-    return true;
+    return matchesWeather(m, activeWeather);
   });
 }
 
@@ -716,6 +752,7 @@ function renderActivity() {
       <div class="activity-card-left">
         <div class="activity-mode">${esc(mode ? modeLabel(mode) : '—')}</div>
         <div class="activity-map">${esc(mapLabel(map) || map || '—')}</div>
+        <div class="weather-label">Weather: ${weatherLabel(m)}</div>
         ${winner ? `<div class="activity-winner">Winner: <span>${esc(winner)}</span></div>` : ''}
         <div class="activity-players">${names}</div>
       </div>
@@ -740,7 +777,9 @@ const TEAM_MODES = new Set([
 
 function buildPlayerStats() {
   const map = new Map();
-  for (const m of allMatches) {
+  // The newest available career snapshot wins, including decreases in score.
+  const chronological = [...allMatches].sort((a, b) => (matchDate(a)?.getTime() || 0) - (matchDate(b)?.getTime() || 0));
+  for (const m of chronological) {
     const mode = canonMode(m.mode || m.gametype || '');
     const isRace = RACE_MODES.has(mode);
     const isTeamMode = TEAM_MODES.has(mode);
@@ -766,8 +805,10 @@ function buildPlayerStats() {
 
     for (const p of players) {
       const name = p.name;
-      if (!map.has(name)) map.set(name, { name, playerId: p.playerId || '', wins:0, matches:0, kills:0, deaths:0, bestLapMs:0, isBot: !!p.isBot, achievementTiers: null, playerScore: 0 });
-      const s = map.get(name);
+      const key = p.playerId || name;
+      if (!map.has(key)) map.set(key, { name, playerId: p.playerId || '', wins:0, matches:0, kills:0, deaths:0, bestLapMs:0, isBot: !!p.isBot, achievementTiers: null, playerScore: 0 });
+      const s = map.get(key);
+      s.name = name;
       s.matches++;
       s.kills += p.kills || 0;
       s.deaths += p.deaths || 0;
@@ -781,8 +822,8 @@ function buildPlayerStats() {
       if (lap > 0 && (s.bestLapMs === 0 || lap < s.bestLapMs)) s.bestLapMs = lap;
       const tiers = p.achievementTiers;
       if (Array.isArray(tiers) && tiers.length > 0) s.achievementTiers = tiers;
-      const score = p.playerScore ?? 0;
-      if (score > s.playerScore) s.playerScore = score;
+      const score = Number(p.playerScore);
+      if (p.playerScore != null && Number.isFinite(score)) s.playerScore = Math.max(0, score);
     }
   }
   return [...map.values()];
@@ -938,11 +979,11 @@ function buildProfileHTML(p) {
   // Fall back to p itself so all root-level fields are accessible.
   const career = p.careerStats || p.career || p;
   const modeStats = p.modeStats || p.modes || {};
-  const playerScore = p.playerScore ?? p.score ?? p.totalScore ?? 0;
-  const rankName = p.rankName
-    || (p.currentRank != null ? RANK_NAMES[Math.min(p.currentRank, RANK_NAMES.length - 1)] : null)
-    || rankNameFromScore(playerScore);
-  const score = playerScore || '—';
+  const playerScore = p.playerScore ?? career.playerScore ?? p.score ?? p.totalScore;
+  const hasScore = playerScore != null && Number.isFinite(Number(playerScore));
+  const rankName = hasScore ? rankNameFromScore(Number(playerScore))
+    : (RANK_NAMES[p.currentRank] || 'Rookie Driver');
+  const score = hasScore ? Math.max(0, Number(playerScore)) : '—';
   const sv = v => (v != null && v !== '') ? v : '—';
 
   // Compute K/D from root fields (not stored pre-computed in profile JSON)
@@ -1027,6 +1068,7 @@ async function openMatch(matchId) {
       <div class="md-map">${esc(mapLabel(map)||map||'—')}</div>
       <div class="md-meta">
         <span>${fmtDate(date)}</span>
+        <span class="weather-label">Weather: ${weatherLabel(m)}</span>
         ${m.serverName ? `<span>${esc(m.serverName)}</span>` : ''}
         <span style="color:#333;font-size:9px">${esc(matchId)}</span>
       </div>
