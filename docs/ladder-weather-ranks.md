@@ -59,3 +59,17 @@ Their matches remain visible as Unclassified in activity. No payload is changed.
 The inspected Tryout game code omits GT_GHOST from G_LadderModeForGametype, which
 can emit GT_UNKNOWN for Ghost Race. The actual origin of existing unknown matches
 must be confirmed from their original payloads before any historical reassignment.
+
+## Mapshot lightbox
+
+The map previews in the leaderboard and Ghosts tab are keyboard-accessible
+buttons opening a native modal dialog. The dialog shows the full image without
+cropping, the display name and map ID. Where match history is available it also
+shows recorded matches, distinct human players (UUID first), modes, weather and
+the latest match date. These describe all loaded matches, not just the current
+source/weather filter. The metadata endpoint currently provides only map names;
+author, recommended player count and descriptions are not invented.
+
+Native dialog focus handling provides keyboard trapping, Escape and focus return;
+the close button and backdrop also dismiss it. Missing images have no trigger,
+and a broken thumbnail disables its trigger. Images scale to the viewport.

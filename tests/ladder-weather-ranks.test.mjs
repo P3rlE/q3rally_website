@@ -87,3 +87,48 @@ test('unknown sentinels do not become game modes, matches remain in history', ()
   assert.equal(c.element('hs-modes').textContent, '0');
   assert.equal(c.element('hs-matches').textContent, '1');
 });
+
+
+test('mapshot shows only available map and match data, with safe text', () => {
+  const c = client();
+  c.run(`levelshotManifest = {q3r_sundown: 'jpg'};
+    mapMeta = {q3r_sundown: '<Sundown>'};
+    allMatches = [
+      {map:'Q3R_Sundown',mode:'GT_RACING',weather:'wet', startTime:'2026-10-20T12:00:00Z', players:[{playerId:'a',name:'Player'}, {name:'Bot',isBot:true}]},
+      {map:'q3r_sundown',mode:'GT_UNKNOWN',weather:'snow',startTime:'2026-10-21T12:00:00Z',players:[{playerId:'a',name:'Renamed player'}]},
+      {map:'other',mode:'GT_CTF',players:[{name:'Other'}]}
+    ];`);
+  const html = c.run("mapshotHTML('q3r_sundown')");
+  assert.ok(html.includes('&lt;Sundown&gt;'));
+  assert.ok(!html.includes('<Sundown>'));
+  assert.ok(html.includes('<dt>Recorded matches</dt><dd>2</dd>'));
+  assert.ok(html.includes('<dt>Recorded human players</dt><dd>1</dd>'));
+  assert.ok(html.includes('<dt>Recorded modes</dt><dd>Racing</dd>'));
+  assert.ok(html.includes('Snow, Wet'));
+  assert.ok(!html.includes('Author'));
+  assert.equal(c.run("mapshotHTML('missing')"), '');
+});
+
+test('both map previews open a native dialog; missing and broken images have no trigger', () => {
+  const c = client();
+  c.run("levelshotManifest = {q3r_sundown:'jpg'};");
+  const dialog = c.element('mapshot-dialog');
+  dialog.showModal = () => { dialog.open = true; };
+  for (const id of ['map-levelshot','gh-levelshot']) {
+    const handlers = {};
+    const image = { addEventListener: (event, handler) => { handlers[event] = handler; } };
+    const button = { addEventListener: (event, handler) => { handlers[event] = handler; }, querySelector: () => image };
+    const container = c.element(id);
+    container.querySelector = () => button;
+    c.run(`renderMapshot('${id}', 'q3r_sundown')`);
+    assert.ok(container.innerHTML.includes('type="button"'));
+    assert.ok(container.innerHTML.includes('Enlarge map preview'));
+    handlers.click();
+    assert.equal(dialog.open, true);
+    assert.ok(c.element('mapshot-content').innerHTML.includes('q3r_sundown.jpg'));
+    handlers.error();
+    assert.equal(button.hidden, true);
+    c.run(`renderMapshot('${id}', 'missing')`);
+    assert.equal(container.innerHTML, '');
+  }
+});

@@ -193,6 +193,12 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
   </div>
 </div>
 
+<!-- MAPSHOT LIGHTBOX -->
+<dialog id="mapshot-dialog" class="mapshot-dialog" aria-labelledby="mapshot-title">
+  <button id="mapshot-close" class="mapshot-close" type="button" aria-label="Close map preview">✕ CLOSE</button>
+  <div id="mapshot-content"></div>
+</dialog>
+
 <style is:global>
   /* TOP BAR */
   .top-bar { background: var(--black); border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; height: 36px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
@@ -248,6 +254,20 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
   .map-select { background: var(--dark2); border: 1px solid #2a2a2a; color: var(--white); font-family: 'Share Tech Mono', monospace; font-size: 10px; padding: 8px 10px; width: 100%; letter-spacing: 0.05em; cursor: pointer; }
   .map-select:focus { outline: none; border-color: var(--orange); }
   .map-levelshot { height: 120px; background: #0d0d0d; background-image: var(--stripe); overflow: hidden; }
+  .mapshot-trigger { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+  .mapshot-trigger[hidden] { display: none; }
+  body:has(#mapshot-dialog[open]) { overflow: hidden; }
+  .mapshot-trigger:focus-visible { outline: 2px solid var(--orange); outline-offset: -3px; }
+  .mapshot-dialog { width: min(1100px, calc(100vw - 32px)); max-height: 90vh; box-sizing: border-box; padding: 24px; margin: auto; overflow: auto; background: var(--dark); color: var(--white); border: 1px solid #333; }
+  .mapshot-dialog::backdrop { background: rgba(0, 0, 0, .85); }
+  .mapshot-close { display: block; margin-left: auto; margin-bottom: 16px; padding: 8px 12px; border: 1px solid #444; background: transparent; color: var(--white); cursor: pointer; }
+  .mapshot-close:focus-visible { outline: 2px solid var(--orange); }
+  .mapshot-image { display: block; width: 100%; height: auto; max-height: 62vh; object-fit: contain; background: #080808; }
+  .mapshot-title { font-family: 'Barlow Condensed', sans-serif; font-size: 28px; margin: 18px 0 12px; }
+  .mapshot-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin: 0; }
+  .mapshot-info dt { font: 10px 'Share Tech Mono', monospace; color: var(--gray); text-transform: uppercase; margin-bottom: 6px; }
+  .mapshot-info dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+  .mapshot-note { color: var(--gray); font-size: 11px; margin-top: 16px; }
   .map-levelshot img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
   .map-name { font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; text-transform: uppercase; color: var(--gray-light); letter-spacing: 0.04em; }
   .lb-status { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--gray); letter-spacing: 0.1em; padding: 40px 0; }
@@ -501,8 +521,62 @@ function mapLabel(key) {
 function levelshotUrl(mapKey) {
   const k = (mapKey || '').toLowerCase();
   const ext = levelshotManifest[k];
-  return ext ? `${IMG_BASE}/${k}.${ext}` : null;
+  return ext ? `${IMG_BASE}/${encodeURIComponent(k)}.${ext}` : null;
 }
+// Map details describe the complete loaded match history, not the active filter.
+function mapshotHTML(map) {
+  const url = levelshotUrl(map);
+  if (!url) return '';
+  const matches = allMatches.filter(m => String(m.map || '').toLowerCase() === map.toLowerCase());
+  const fields = [['Map ID', map]];
+  if (matches.length) {
+    const players = new Set();
+    const modes = new Set();
+    const weather = new Set();
+    let last = null;
+    for (const m of matches) {
+      (m.players || []).filter(p => !p.isBot && (p.playerId || p.name)).forEach(p => players.add(p.playerId || p.name));
+      const mode = canonMode(m.mode || m.gametype || '');
+      if (mode) modes.add(modeLabel(mode));
+      weather.add(weatherLabel(m));
+      const date = matchDate(m);
+      if (date && (!last || date > last)) last = date;
+    }
+    fields.push(['Recorded matches', matches.length], ['Recorded human players', players.size]);
+    if (modes.size) fields.push(['Recorded modes', [...modes].sort().join(', ')]);
+    fields.push(['Recorded weather', [...weather].sort().join(', ')]);
+    if (last) fields.push(['Last recorded match', fmtDate(last)]);
+  }
+  return `<img class="mapshot-image" src="${esc(url)}" alt="${esc(mapLabel(map))}" />
+    <h2 id="mapshot-title" class="mapshot-title">${esc(mapLabel(map))}</h2>
+    <dl class="mapshot-info">${fields.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>
+    ${matches.length ? '<p class="mapshot-note">Based on the loaded match history across all sources and weather conditions.</p>' : ''}`;
+}
+function renderMapshot(id, map) {
+  const container = document.getElementById(id);
+  const url = map ? levelshotUrl(map) : null;
+  container.innerHTML = url ? `<button type="button" class="mapshot-trigger" aria-label="${esc('Enlarge map preview: ' + mapLabel(map))}"><img src="${esc(url)}" alt="${esc(mapLabel(map))}" loading="lazy" /></button>` : '';
+  if (!url) return;
+  const button = container.querySelector('button');
+  button.addEventListener('click', () => openMapshot(map));
+  // A stale manifest or missing image must not leave an empty clickable preview.
+  button.querySelector('img').addEventListener('error', () => { button.hidden = true; }, { once: true });
+}
+function openMapshot(map) {
+  const html = mapshotHTML(map);
+  if (!html) return;
+  const dialog = document.getElementById('mapshot-dialog');
+  document.getElementById('mapshot-content').innerHTML = html;
+  dialog.showModal();
+}
+const mapshotDialog = document.getElementById('mapshot-dialog');
+document.getElementById('mapshot-close').addEventListener('click', () => mapshotDialog.close());
+mapshotDialog.addEventListener('click', event => {
+  if (event.target !== mapshotDialog) return;
+  const rect = mapshotDialog.getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) mapshotDialog.close();
+});
+
 function fmtTime(ms) {
   if (ms == null || ms === 0) return '—';
   const n = typeof ms === 'string' ? parseFloat(ms) : ms;
@@ -678,10 +752,7 @@ function renderLeaderboard() {
   });
   sel.onchange = () => { activeMap = sel.value; renderLeaderboard(); };
 
-  // Levelshot
-  const lsUrl = levelshotUrl(activeMap);
-  const lsDiv = document.getElementById('map-levelshot');
-  lsDiv.innerHTML = lsUrl ? `<img src="${lsUrl}" alt="${esc(activeMap)}" loading="lazy" />` : '';
+  renderMapshot('map-levelshot', activeMap);
   document.getElementById('map-name').textContent = mapLabel(activeMap);
 
   const isRace = RACE_MODES.has(activeMode);
@@ -1207,8 +1278,7 @@ function renderGhosts() {
     gh.vehicle = btn.dataset.vehicle; renderGhosts();
   }));
 
-  const lsUrl = m ? levelshotUrl(m.map) : null;
-  document.getElementById('gh-levelshot').innerHTML = lsUrl ? `<img src="${lsUrl}" alt="${esc(m.map)}" loading="lazy" />` : '';
+  renderMapshot('gh-levelshot', m ? m.map : '');
   document.getElementById('gh-map-name').textContent = m ? mapLabel(m.map) : '';
 
   if (!maps.length || !b) { ghStatus('No ghosts yet.'); return; }
