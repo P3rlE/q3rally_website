@@ -50,18 +50,20 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
       <div class="mode-tabs-wrap">
         <div class="mode-tabs" id="mode-tabs"></div>
       </div>
-      <div class="source-toggle">
-        <button class="src-btn active" data-src="all">ALL</button>
-        <button class="src-btn" data-src="online">ONLINE</button>
-        <button class="src-btn" data-src="offline">OFFLINE</button>
+      <div class="ladder-filters">
+        <div class="source-toggle" role="group" aria-label="Match source">
+          <button class="src-btn active" data-src="all">ALL</button>
+          <button class="src-btn" data-src="online">ONLINE</button>
+          <button class="src-btn" data-src="offline">OFFLINE</button>
+        </div>
+        <div class="source-toggle weather-toggle" role="group" aria-label="Track weather">
+          <button class="weather-btn src-btn active" data-weather="all" aria-pressed="true">ANY WEATHER</button>
+          <button class="weather-btn src-btn" data-weather="dry" aria-pressed="false">DRY</button>
+          <button class="weather-btn src-btn" data-weather="wet" aria-pressed="false">WET</button>
+          <button class="weather-btn src-btn" data-weather="snow" aria-pressed="false">SNOW</button>
+          <button class="weather-btn src-btn" data-weather="mixed" aria-pressed="false">MIXED</button>
+        </div>
       </div>
-    </div>
-    <div class="source-toggle weather-toggle" role="group" aria-label="Track weather">
-      <button class="weather-btn src-btn active" data-weather="all" aria-pressed="true">ANY WEATHER</button>
-      <button class="weather-btn src-btn" data-weather="dry" aria-pressed="false">DRY</button>
-      <button class="weather-btn src-btn" data-weather="wet" aria-pressed="false">WET</button>
-      <button class="weather-btn src-btn" data-weather="snow" aria-pressed="false">SNOW</button>
-      <button class="weather-btn src-btn" data-weather="mixed" aria-pressed="false">MIXED</button>
     </div>
     <div class="lb-body">
       <div class="map-panel">
@@ -229,13 +231,13 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
 
   /* LEADERBOARD TOOLBAR */
   .lb-toolbar { background: var(--dark); border-bottom: 1px solid #1a1a1a; padding: 0 80px; display: flex; align-items: stretch; justify-content: space-between; gap: 24px; }
-  .mode-tabs-wrap { flex: 1; overflow-x: auto; display: flex; }
+  .mode-tabs-wrap { flex: 1; min-width: 0; overflow-x: auto; display: flex; align-items: center; }
   .mode-tabs { display: flex; gap: 0; }
   .mode-tab { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gray); padding: 16px 20px; border: none; background: none; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; transition: color 0.15s, border-color 0.15s; }
   .mode-tab:hover { color: var(--white); }
   .mode-tab.active { color: var(--orange); border-bottom-color: var(--orange); }
-  .source-toggle { display: flex; gap: 0; align-items: center; padding: 12px 0; flex-shrink: 0; border-left: 1px solid #1a1a1a; padding-left: 24px; }
-  .source-toggle.weather-toggle { padding: 0 24px 16px; flex-wrap: wrap; border-left: none; width: 100%; }
+  .ladder-filters { display: flex; flex-direction: column; justify-content: center; align-items: flex-end; gap: 8px; padding: 14px 0 14px 24px; border-left: 1px solid #1a1a1a; flex: 0 0 auto; }
+  .source-toggle { display: flex; gap: 0; align-items: center; flex-wrap: wrap; }
   .src-btn { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gray); padding: 5px 12px; border: 1px solid #252525; background: none; cursor: pointer; transition: color 0.15s, border-color 0.15s, background 0.15s; margin-left: -1px; }
   .src-btn.active { color: var(--orange); border-color: var(--orange); background: rgba(255,85,0,0.05); z-index: 1; position: relative; }
 
@@ -388,9 +390,10 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
 
     /* LEADERBOARD TOOLBAR */
     .lb-toolbar { padding: 0 16px; flex-wrap: wrap; gap: 0; }
-    .mode-tabs-wrap { width: 100%; border-bottom: 1px solid #1a1a1a; }
+    .mode-tabs-wrap { flex: 1 1 100%; width: 100%; border-bottom: 1px solid #1a1a1a; }
     .mode-tab { padding: 12px 14px; font-size: 12px; }
-    .source-toggle { border-left: none; padding-left: 0; padding: 10px 0; width: 100%; }
+    .ladder-filters { align-items: flex-start; border-left: none; padding: 12px 0; width: 100%; min-width: 0; }
+    .source-toggle { max-width: 100%; row-gap: 4px; }
 
     /* LEADERBOARD BODY */
     .lb-body { grid-template-columns: 1fr; padding: 20px 16px; gap: 20px; }
