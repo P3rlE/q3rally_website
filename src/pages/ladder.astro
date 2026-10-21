@@ -454,6 +454,7 @@ const MODE_LABELS = {
   GT_DERBY:'Derby', GT_DEATHMATCH:'Deathmatch',
   GT_TEAM:'Team DM', GT_CTF:'CTF', GT_CTF4:'4-Team CTF',
   GT_DOMINATION:'Domination', GT_KOTH:'King of the Hill',
+  GT_AUTOBALL:'Autoball', GT_GHOST:'Ghost Race', GT_SINGLE_PLAYER:'Single Player',
 };
 const RACE_MODES = new Set(['GT_RACING','GT_RACING_DM','GT_SPRINT','GT_TEAM_RACING','GT_TEAM_RACING_DM']);
 
@@ -479,6 +480,9 @@ function matchesWeather(match, weather) {
 function canonMode(raw) {
   if (!raw) return null;
   let m = String(raw).trim().toUpperCase().replace(/[\s-]+/g,'_');
+  // Explicit backend sentinels are not playable leaderboard categories.
+  if (['UNKNOWN', 'GT_UNKNOWN', '__UNKNOWN__', 'GT___UNKNOWN__'].includes(m)) return null;
+  if (!m) return null;
   if (!m.startsWith('GT_')) m = 'GT_' + m;
   return m;
 }
@@ -753,7 +757,7 @@ function renderActivity() {
 
     return `<div class="activity-card" data-match-id="${esc(m.matchId||'')}">
       <div class="activity-card-left">
-        <div class="activity-mode">${esc(mode ? modeLabel(mode) : '—')}</div>
+        <div class="activity-mode">${esc(mode ? modeLabel(mode) : 'Unclassified')}</div>
         <div class="activity-map">${esc(mapLabel(map) || map || '—')}</div>
         <div class="weather-label">Weather: ${weatherLabel(m)}</div>
         ${winner ? `<div class="activity-winner">Winner: <span>${esc(winner)}</span></div>` : ''}
@@ -1067,7 +1071,7 @@ async function openMatch(matchId) {
       <td>${esc(p.vehicle||'—')}</td>
     </tr>`).join('');
     content.innerHTML = `<div class="md-header">
-      <div class="md-mode">${esc(mode ? modeLabel(mode) : '—')}</div>
+      <div class="md-mode">${esc(mode ? modeLabel(mode) : 'Unclassified')}</div>
       <div class="md-map">${esc(mapLabel(map)||map||'—')}</div>
       <div class="md-meta">
         <span>${fmtDate(date)}</span>

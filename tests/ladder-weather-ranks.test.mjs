@@ -72,3 +72,18 @@ test('weather renders in recent activity and full match details', async () => {
   await c.run(`openMatch('snow-match')`);
   assert.ok(c.element('match-content').innerHTML.includes('Weather: Snow'));
 });
+
+
+test('unknown sentinels do not become game modes, matches remain in history', () => {
+  const c = client();
+  for (const raw of ['GT_UNKNOWN', 'unknown', '__unknown__', '  ']) {
+    assert.equal(c.run(`canonMode(${JSON.stringify(raw)})`), null);
+  }
+  assert.equal(c.run("canonMode('GT_AUTOBALL')"), 'GT_AUTOBALL');
+  assert.equal(c.run("modeLabel('GT_AUTOBALL')"), 'Autoball');
+  assert.equal(c.run("modeLabel('GT_GHOST')"), 'Ghost Race');
+  c.run("allMatches = [{matchId:'old-unknown',mode:'GT_UNKNOWN',players:[]}]; renderActivity(); updateHeader();");
+  assert.ok(c.element('activity-feed').innerHTML.includes('Unclassified'));
+  assert.equal(c.element('hs-modes').textContent, '0');
+  assert.equal(c.element('hs-matches').textContent, '1');
+});

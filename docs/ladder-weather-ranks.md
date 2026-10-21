@@ -49,3 +49,13 @@ backs up changed installed files under /var/backups before applying its patch.
 - Full Astro production build using the configured public Sanity dataset.
 - Rank patch applied to current Tryout PHP source: syntax checked, idempotent,
   weather preserved, diff restricted to require plus load/save normalization.
+
+## Toolbar layout and unknown modes
+
+Source and weather controls now share a taller right-hand column; on mobile the
+controls sit below the horizontally scrolling mode list. `GT_UNKNOWN` and legacy
+`__unknown__` sentinels do not create leaderboard tabs or increase the mode count.
+Their matches remain visible as Unclassified in activity. No payload is changed.
+The inspected Tryout game code omits GT_GHOST from G_LadderModeForGametype, which
+can emit GT_UNKNOWN for Ghost Race. The actual origin of existing unknown matches
+must be confirmed from their original payloads before any historical reassignment.
