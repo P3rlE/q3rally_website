@@ -237,11 +237,12 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
 
   /* LEADERBOARD TOOLBAR */
   .lb-toolbar { background: var(--dark); border-bottom: 1px solid #1a1a1a; padding: 0 80px; display: flex; align-items: stretch; justify-content: space-between; gap: 24px; }
-  .mode-tabs-wrap { flex: 1; min-width: 0; overflow-x: auto; display: flex; align-items: center; }
-  .mode-tabs { display: flex; gap: 0; }
-  .mode-tab { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gray); padding: 16px 20px; border: none; background: none; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; transition: color 0.15s, border-color 0.15s; }
-  .mode-tab:hover { color: var(--white); }
-  .mode-tab.active { color: var(--orange); border-bottom-color: var(--orange); }
+  .mode-tabs-wrap { flex: 1; min-width: 0; display: flex; align-items: center; padding: 14px 0; }
+  .mode-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; }
+  .mode-tab { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--gray); padding: 8px 12px; border: 1px solid #252525; border-radius: 2px; background: transparent; cursor: pointer; white-space: nowrap; max-width: 100%; transition: color 0.15s, border-color 0.15s, background 0.15s; }
+  .mode-tab:hover { color: var(--white); border-color: #555; background: #191919; }
+  .mode-tab:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+  .mode-tab.active { color: var(--orange); border-color: var(--orange); background: rgba(255,85,0,0.08); }
   .ladder-filters { display: flex; flex-direction: column; justify-content: center; align-items: flex-end; gap: 8px; padding: 14px 0 14px 24px; border-left: 1px solid #1a1a1a; flex: 0 0 auto; }
   .source-toggle { display: flex; gap: 0; align-items: center; flex-wrap: wrap; }
   .src-btn { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gray); padding: 5px 12px; border: 1px solid #252525; background: none; cursor: pointer; transition: color 0.15s, border-color 0.15s, background 0.15s; margin-left: -1px; }
@@ -411,7 +412,8 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
     /* LEADERBOARD TOOLBAR */
     .lb-toolbar { padding: 0 16px; flex-wrap: wrap; gap: 0; }
     .mode-tabs-wrap { flex: 1 1 100%; width: 100%; border-bottom: 1px solid #1a1a1a; }
-    .mode-tab { padding: 12px 14px; font-size: 12px; }
+    .mode-tabs-wrap { padding: 12px 0; }
+    .mode-tab { padding: 8px 10px; }
     .ladder-filters { align-items: flex-start; border-left: none; padding: 12px 0; width: 100%; min-width: 0; }
     .source-toggle { max-width: 100%; row-gap: 4px; }
 
