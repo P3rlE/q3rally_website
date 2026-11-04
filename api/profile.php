@@ -73,9 +73,13 @@ function deviceRequest(PDO $db, string $action, array $input, int $now): never
     if ($device['profile_id'] === null) {
         reply(202, ['linked' => false]);
     }
-    $setup = query($db, "SELECT paint, wheels FROM garage_setups WHERE profile_id = ? AND vehicle = 'alpine'",
-        [$device['profile_id']])->fetch(PDO::FETCH_ASSOC);
-    reply(200, ['linked' => true, 'setup' => $setup ?: null]);
+    $vehicle = array_key_exists('vehicle', $input) ? $input['vehicle'] : 'alpine';
+    if (!is_string($vehicle) || !preg_match('/^[a-z0-9_-]{1,48}$/D', $vehicle)) {
+        reply(400, ['error' => 'Invalid vehicle']);
+    }
+    $setup = query($db, 'SELECT paint, wheels FROM garage_setups WHERE profile_id = ? AND vehicle = ?',
+        [$device['profile_id'], $vehicle])->fetch(PDO::FETCH_ASSOC);
+    reply(200, ['linked' => true, 'vehicle' => $vehicle, 'setup' => $setup ?: null]);
 }
 
 $method = $_SERVER['REQUEST_METHOD'] ?? '';
