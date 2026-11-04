@@ -30,10 +30,9 @@ function throttle(PDO $db, string $bucket, int $max, int $now): void
     }
 }
 
-function sendVerification(string $email, string $token, string $origin): void
+function sendProfileMail(string $email, string $subject, string $message): void
 {
     $config = getenv('Q3RALLY_SMTP_CONFIG') ?: '/etc/q3rally-profile/msmtprc';
-    $link = $origin . '/garage/#verify=' . $token;
     $transport = getenv('Q3RALLY_SMTP_BINARY') ?: '/usr/bin/msmtp';
     $sink = PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
     $process = proc_open([$transport, '--file=' . $config, '--account=q3rally', '--', $email],
@@ -41,8 +40,8 @@ function sendVerification(string $email, string $token, string $origin): void
     if (!is_resource($process)) {
         throw new RuntimeException('Could not start the profile mail transport');
     }
-    fwrite($pipes[0], "From: accounts@q3rally.com\r\nTo: $email\r\nSubject: Confirm your Q3Rally account\r\n"
-        . "Content-Type: text/plain; charset=UTF-8\r\n\r\nConfirm your account within 24 hours:\r\n$link\r\n");
+    fwrite($pipes[0], "From: accounts@q3rally.com\r\nTo: $email\r\nSubject: $subject\r\n"
+        . "Content-Type: text/plain; charset=UTF-8\r\n\r\n$message\r\n");
     fclose($pipes[0]);
     if (proc_close($process) !== 0) {
         throw new RuntimeException('Profile mail transport failed');
@@ -115,7 +114,7 @@ try {
     $db = new PDO('sqlite:' . $database, options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
     $db->exec('PRAGMA busy_timeout = 5000');
     $db->exec('PRAGMA foreign_keys = ON');
-    if ((int) $db->query('PRAGMA user_version')->fetchColumn() !== 3) {
+    if ((int) $db->query('PRAGMA user_version')->fetchColumn() !== 4) {
         reply(503, ['error' => 'Profile service unavailable']);
     }
 
@@ -137,6 +136,14 @@ try {
     ]);
 
     $profile = ($_SESSION['expires'] ?? 0) > $now ? ($_SESSION['profile'] ?? null) : null;
+    if ($profile !== null) {
+        $hash = query($db, 'SELECT a.password_hash FROM accounts a JOIN profiles p
+            ON p.account_id = a.id WHERE p.id = ?', [$profile])->fetchColumn();
+        if (!$hash || !hash_equals(hash('sha256', $hash), $_SESSION['credential'] ?? '')) {
+            $_SESSION = [];
+            $profile = null;
+        }
+    }
     if ($action === 'status') {
         reply(200, ['signedIn' => $profile !== null]);
     }
@@ -147,6 +154,64 @@ try {
             'expires' => 1, 'path' => '/api/profile.php', 'secure' => true, 'httponly' => true, 'samesite' => 'Lax',
         ]);
         reply(200, ['signedIn' => false]);
+    }
+    if ($action === 'request_reset') {
+        $email = $input['email'] ?? null;
+        if (!is_string($email) || strlen($email) > 254 || !filter_var($email, FILTER_VALIDATE_EMAIL)
+            || strpbrk($email, "\r\n") !== false) {
+            reply(400, ['error' => 'Enter a valid email address']);
+        }
+        $email = strtolower($email);
+        throttle($db, 'reset:ip:' . hash('sha256', $_SERVER['REMOTE_ADDR'] ?? ''), 10, $now);
+        throttle($db, 'reset:email:' . hash('sha256', $email), 3, $now);
+        $account = query($db, 'SELECT id FROM accounts WHERE email = ? AND verified_at IS NOT NULL',
+            [$email])->fetchColumn();
+        if ($account) {
+            $token = bin2hex(random_bytes(32));
+            query($db, 'DELETE FROM password_resets WHERE account_id = ? AND expires_at <= ?', [$account, $now]);
+            $inserted = query($db, 'INSERT INTO password_resets VALUES (?, ?, ?)
+                ON CONFLICT(account_id) DO NOTHING', [$account, hash('sha256', $token), $now + 1800])->rowCount();
+            if ($inserted) {
+                try {
+                    sendProfileMail($email, 'Reset your Q3Rally password',
+                        "Choose a new password within 30 minutes:\r\n" . $origin . '/garage/#reset=' . $token);
+                } catch (RuntimeException $error) {
+                    query($db, 'DELETE FROM password_resets WHERE token_hash = ?', [hash('sha256', $token)]);
+                    error_log($error->getMessage());
+                }
+            }
+        }
+        reply(202, ['message' => 'If a verified account exists, check your inbox for a password reset link.']);
+    }
+    if ($action === 'reset_password') {
+        $token = $input['token'] ?? null;
+        $password = $input['password'] ?? null;
+        if (!is_string($token) || !preg_match('/^[a-f0-9]{64}$/D', $token)) {
+            reply(400, ['error' => 'Invalid or expired reset link']);
+        }
+        if (!is_string($password) || strlen($password) < 12 || strlen($password) > 72 || str_contains($password, "\0")) {
+            reply(400, ['error' => 'Enter a password of 12 to 72 bytes']);
+        }
+        throttle($db, 'reset:consume:' . hash('sha256', $_SERVER['REMOTE_ADDR'] ?? ''), 15, $now);
+        $tokenHash = hash('sha256', $token);
+        $account = query($db, 'SELECT account_id FROM password_resets WHERE token_hash = ? AND expires_at > ?',
+            [$tokenHash, $now])->fetchColumn();
+        if (!$account) {
+            reply(400, ['error' => 'Invalid or expired reset link']);
+        }
+        $hash = password_hash($password, PASSWORD_DEFAULT);
+        $db->beginTransaction();
+        if (query($db, 'DELETE FROM password_resets WHERE token_hash = ? AND expires_at > ?',
+            [$tokenHash, time()])->rowCount() !== 1) {
+            $db->rollBack();
+            reply(400, ['error' => 'Invalid or expired reset link']);
+        }
+        query($db, 'UPDATE accounts SET password_hash = ? WHERE id = ?', [$hash, $account]);
+        query($db, 'DELETE FROM profile_devices WHERE profile_id = (SELECT id FROM profiles WHERE account_id = ?)',
+            [$account]);
+        $db->commit();
+        $_SESSION = [];
+        reply(200, ['reset' => true]);
     }
     if ($action === 'verify') {
         $token = $input['token'] ?? null;
@@ -244,7 +309,8 @@ try {
         if (!session_regenerate_id(true)) {
             throw new RuntimeException('Could not renew profile session');
         }
-        $_SESSION = ['profile' => $account['profile_id'], 'expires' => $now + 43200];
+        $_SESSION = ['profile' => $account['profile_id'], 'expires' => $now + 43200,
+            'credential' => hash('sha256', $account['password_hash'])];
         reply(200, ['signedIn' => true]);
     }
 
@@ -265,7 +331,8 @@ try {
     $db->commit();
     if ($pending) {
         try {
-            sendVerification($email, $token, $origin);
+            sendProfileMail($email, 'Confirm your Q3Rally account',
+                "Confirm your account within 24 hours:\r\n" . $origin . '/garage/#verify=' . $token);
         } catch (RuntimeException $error) {
             error_log($error->getMessage());
         }

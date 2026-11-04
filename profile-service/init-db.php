@@ -37,7 +37,12 @@ try {
     if ($version === 2) {
         $db->exec(file_get_contents(__DIR__ . '/schema-v3.sql'));
         $db->exec('PRAGMA user_version = 3');
-    } elseif ($version !== 3) {
+        $version = 3;
+    }
+    if ($version === 3) {
+        $db->exec(file_get_contents(__DIR__ . '/schema-v4.sql'));
+        $db->exec('PRAGMA user_version = 4');
+    } elseif ($version !== 4) {
         throw new RuntimeException("Unsupported schema version: $version");
     }
     $db->exec('COMMIT');

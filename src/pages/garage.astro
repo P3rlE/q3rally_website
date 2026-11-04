@@ -23,11 +23,14 @@ const wheels = [
       <fieldset>
         <legend>Web profile</legend>
         <label data-email>Email <input name="email" type="email" autocomplete="username" required /></label>
-        <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
+        <label data-password>Password <input name="password" type="password" autocomplete="current-password" required /></label>
       </fieldset>
       <button name="action" value="login">Sign in</button>
       <button name="action" value="register">Create account</button>
       <button name="action" value="verify" hidden>Confirm email</button>
+      <button name="action" value="request_reset" hidden>Send reset link</button>
+      <button name="action" value="reset_password" hidden>Save new password</button>
+      <button type="button" data-forgot>Forgot password?</button>
     </form>
     <button type="button" data-logout hidden>Sign out</button>
     <p role="status" data-account-status>Sign in to save your Alpine setup to your web profile.</p>
@@ -90,9 +93,13 @@ const wheels = [
     const deviceStatus = link.querySelector<HTMLElement>('[role="status"]')!;
     const save = form.querySelector<HTMLButtonElement>('button')!;
     const email = account.querySelector<HTMLInputElement>('[name="email"]')!;
-    const actions = [...account.querySelectorAll<HTMLButtonElement>('button')];
+    const password = account.querySelector<HTMLInputElement>('[name="password"]')!;
+    const forgot = account.querySelector<HTMLButtonElement>('[data-forgot]')!;
+    const actions = [...account.querySelectorAll<HTMLButtonElement>('button[name="action"]')];
     const choices = [...form.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
-    let token = new URLSearchParams(location.hash.slice(1)).get('verify');
+    const linkParams = new URLSearchParams(location.hash.slice(1));
+    let mode = linkParams.has('reset') ? 'reset_password' : linkParams.has('verify') ? 'verify' : 'login';
+    let token = linkParams.get(mode === 'reset_password' ? 'reset' : 'verify');
     if (token) history.replaceState(null, '', location.pathname + location.search);
 
     function refresh() {
@@ -125,9 +132,18 @@ const wheels = [
         link.reset();
         deviceStatus.textContent = 'Enter the code shown by your copy of Q3Rally.';
       }
+      email.disabled = !!token;
       email.required = !token;
       account.querySelector<HTMLElement>('[data-email]')!.hidden = !!token;
-      for (const button of actions) button.hidden = token ? button.value !== 'verify' : button.value === 'verify';
+      password.disabled = mode === 'request_reset';
+      password.required = !password.disabled;
+      password.autocomplete = mode === 'reset_password' ? 'new-password' : 'current-password';
+      account.querySelector<HTMLElement>('[data-password]')!.hidden = password.disabled;
+      forgot.hidden = !!token;
+      forgot.textContent = mode === 'request_reset' ? 'Back to sign in' : 'Forgot password?';
+      for (const button of actions) {
+        button.hidden = mode === 'login' ? !['login', 'register'].includes(button.value) : button.value !== mode;
+      }
       if (signedIn) {
         const { setup } = await request({ action: 'garage' });
         for (const choice of choices) {
@@ -137,17 +153,27 @@ const wheels = [
       }
     }
 
+    forgot.addEventListener('click', () => {
+      mode = mode === 'request_reset' ? 'login' : 'request_reset';
+      password.value = '';
+      accountStatus.textContent = mode === 'request_reset' ? 'Enter the email address for your web profile.' : 'Sign in to your web profile.';
+      void showAccount(false);
+    });
+
     account.addEventListener('submit', async event => {
       event.preventDefault();
-      const action = (event.submitter as HTMLButtonElement | null)?.value ?? (token ? 'verify' : 'login');
+      const action = (event.submitter as HTMLButtonElement | null)?.value ?? mode;
       const fields = Object.fromEntries(new FormData(account));
       for (const button of actions) button.disabled = true;
       try {
         const result = await request({ ...fields, action, token });
         account.reset();
-        if (result.verified) token = null;
+        if (result.verified || result.reset) {
+          token = null;
+          mode = 'login';
+        }
         await showAccount(!!result.signedIn);
-        accountStatus.textContent = result.message || (result.verified ? 'Email confirmed. You can now sign in.' : 'Signed in.');
+        accountStatus.textContent = result.message || (result.reset ? 'Password updated. Sign in and link your game again.' : result.verified ? 'Email confirmed. You can now sign in.' : 'Signed in.');
       } catch (error) {
         accountStatus.textContent = String(error instanceof Error ? error.message : error);
       } finally {
@@ -207,7 +233,9 @@ const wheels = [
     });
 
     if (token) {
-      accountStatus.textContent = 'Enter your registration password to confirm this email address.';
+      accountStatus.textContent = mode === 'reset_password'
+        ? 'Choose a new password for your web profile.'
+        : 'Enter your registration password to confirm this email address.';
       void showAccount(false);
     } else {
       request().then(result => showAccount(!!result.signedIn)).catch(() => {
