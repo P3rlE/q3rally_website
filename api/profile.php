@@ -264,24 +264,35 @@ try {
         }
         reply(200, ['linked' => true]);
     }
-    if ($action === 'garage') {
+    if ($action === 'garage' || $action === 'garage_list') {
         if (!$profile) {
             reply(401, ['error' => 'Sign in to use your web garage']);
+        }
+        if ($action === 'garage_list') {
+            $rows = query($db, 'SELECT vehicle, paint, wheels FROM garage_setups WHERE profile_id = ?',
+                [$profile])->fetchAll(PDO::FETCH_ASSOC);
+            reply(200, ['setups' => $rows]);
+        }
+
+        $catalog = json_decode(file_get_contents(__DIR__ . '/../src/data/garageCatalog.json'), true, 512, JSON_THROW_ON_ERROR);
+        $vehicle = $input['vehicle'] ?? 'alpine';
+        if (!is_string($vehicle) || !isset($catalog['vehicles'][$vehicle])) {
+            reply(400, ['error' => 'Unknown vehicle']);
         }
         if (array_key_exists('paint', $input) || array_key_exists('wheels', $input)) {
             $paint = $input['paint'] ?? null;
             $wheels = $input['wheels'] ?? null;
-            if (!in_array($paint, ['blue', 'green', 'red', 'yellow'], true)
-                || !in_array($wheels, ['svt_cobra', 'q3r_rally13', 'q3r_rally13_dark'], true)) {
-                reply(400, ['error' => 'Unknown Alpine setup']);
+            if (!is_string($paint) || !isset($catalog['vehicles'][$vehicle]['paints'][$paint])
+                || !is_string($wheels) || !isset($catalog['wheels'][$wheels])) {
+                reply(400, ['error' => 'Unknown paint or wheels for this vehicle']);
             }
-            query($db, "INSERT INTO garage_setups VALUES (?, 'alpine', ?, ?, ?)
+            query($db, 'INSERT INTO garage_setups VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(profile_id, vehicle) DO UPDATE SET
-                paint = excluded.paint, wheels = excluded.wheels, updated_at = excluded.updated_at",
-                [$profile, $paint, $wheels, $now]);
+                paint = excluded.paint, wheels = excluded.wheels, updated_at = excluded.updated_at',
+                [$profile, $vehicle, $paint, $wheels, $now]);
         }
-        $setup = query($db, "SELECT paint, wheels FROM garage_setups WHERE profile_id = ? AND vehicle = 'alpine'",
-            [$profile])->fetch(PDO::FETCH_ASSOC);
+        $setup = query($db, 'SELECT paint, wheels FROM garage_setups WHERE profile_id = ? AND vehicle = ?',
+            [$profile, $vehicle])->fetch(PDO::FETCH_ASSOC);
         reply(200, ['setup' => $setup ?: null]);
     }
     if ($action !== 'register' && $action !== 'login') {
