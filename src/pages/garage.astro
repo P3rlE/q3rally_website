@@ -1,0 +1,199 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Nav from '../components/Nav.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const paints = [['blue', 'Blue'], ['green', 'Green'], ['red', 'Red'], ['yellow', 'Yellow']];
+const wheels = [
+  ['svt_cobra', 'SVT Cobra'],
+  ['q3r_rally13', 'Rally 13'],
+  ['q3r_rally13_dark', 'Rally 13 Dark'],
+];
+---
+
+<BaseLayout title="Q3Rally — Garage">
+  <Nav slot="nav" active={base + '/garage'} />
+  <section class="garage" data-garage data-api={base + '/api/profile.php'}>
+    <header>
+      <p class="eyebrow">GARAGE / ALPINE</p>
+      <h1>YOUR SETUP.</h1>
+      <p>Choose the paint and wheels for your Alpine.</p>
+    </header>
+    <form data-account>
+      <fieldset>
+        <legend>Web profile</legend>
+        <label data-email>Email <input name="email" type="email" autocomplete="username" required /></label>
+        <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
+      </fieldset>
+      <button name="action" value="login">Sign in</button>
+      <button name="action" value="register">Create account</button>
+      <button name="action" value="verify" hidden>Confirm email</button>
+    </form>
+    <button type="button" data-logout hidden>Sign out</button>
+    <p role="status" data-account-status>Sign in to save your Alpine setup to your web profile.</p>
+    <div class="garage-grid">
+      <section class="preview" aria-label="Selected setup">
+        <figure>
+          <img data-preview="paint" src={base + '/garage/alpine-blue.png'} alt="Alpine in blue" />
+          <figcaption data-label="paint">Blue</figcaption>
+        </figure>
+        <figure>
+          <img data-preview="wheels" src={base + '/garage/wheels-svt_cobra.png'} alt="SVT Cobra" />
+          <figcaption data-label="wheels">SVT Cobra</figcaption>
+        </figure>
+      </section>
+      <form data-setup>
+        {[
+          { field: 'paint', label: 'Paint', prefix: 'alpine', choices: paints },
+          { field: 'wheels', label: 'Wheels', prefix: 'wheels', choices: wheels },
+        ].map(({ field, label, prefix, choices }) => (
+          <fieldset>
+            <legend>{label}</legend>
+            <div class="choices">
+              {choices.map(([id, name], index) => (
+                <label>
+                  <input type="radio" name={field} value={id} checked={index === 0}
+                    data-image={base + '/garage/' + prefix + '-' + id + '.png'} data-name={name} />
+                  <span>{name}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        ))}
+        <button type="submit" disabled>Save to web profile</button>
+        <p role="status">Preview setup</p>
+      </form>
+    </div>
+  </section>
+</BaseLayout>
+
+<script>
+  function setupGarage(garage: HTMLElement) {
+    const account = garage.querySelector<HTMLFormElement>('[data-account]')!;
+    const form = garage.querySelector<HTMLFormElement>('[data-setup]')!;
+    const logout = garage.querySelector<HTMLButtonElement>('[data-logout]')!;
+    const accountStatus = garage.querySelector<HTMLElement>('[data-account-status]')!;
+    const status = form.querySelector<HTMLElement>('[role="status"]')!;
+    const save = form.querySelector<HTMLButtonElement>('button')!;
+    const email = account.querySelector<HTMLInputElement>('[name="email"]')!;
+    const actions = [...account.querySelectorAll<HTMLButtonElement>('button')];
+    const choices = [...form.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
+    let token = new URLSearchParams(location.hash.slice(1)).get('verify');
+    if (token) history.replaceState(null, '', location.pathname + location.search);
+
+    function refresh() {
+      for (const input of choices.filter(choice => choice.checked)) {
+        const image = garage.querySelector<HTMLImageElement>('[data-preview="' + input.name + '"]')!;
+        const caption = garage.querySelector('[data-label="' + input.name + '"]')!;
+        image.src = input.dataset.image!;
+        image.alt = input.name === 'paint' ? 'Alpine in ' + input.dataset.name : input.dataset.name!;
+        caption.textContent = input.dataset.name!;
+      }
+    }
+
+    async function request(body?: Record<string, FormDataEntryValue | null>) {
+      const response = await fetch(garage.dataset.api!, body ? {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      } : undefined);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Profile service unavailable');
+      return result;
+    }
+
+    async function showAccount(signedIn: boolean) {
+      account.hidden = signedIn;
+      logout.hidden = !signedIn;
+      save.disabled = !signedIn;
+      email.required = !token;
+      account.querySelector<HTMLElement>('[data-email]')!.hidden = !!token;
+      for (const button of actions) button.hidden = token ? button.value !== 'verify' : button.value === 'verify';
+      if (signedIn) {
+        const { setup } = await request({ action: 'garage' });
+        for (const choice of choices) {
+          if (setup?.[choice.name] === choice.value) choice.checked = true;
+        }
+        refresh();
+      }
+    }
+
+    account.addEventListener('submit', async event => {
+      event.preventDefault();
+      const action = (event.submitter as HTMLButtonElement | null)?.value ?? (token ? 'verify' : 'login');
+      const fields = Object.fromEntries(new FormData(account));
+      for (const button of actions) button.disabled = true;
+      try {
+        const result = await request({ ...fields, action, token });
+        account.reset();
+        if (result.verified) token = null;
+        await showAccount(!!result.signedIn);
+        accountStatus.textContent = result.message || (result.verified ? 'Email confirmed. You can now sign in.' : 'Signed in.');
+      } catch (error) {
+        accountStatus.textContent = String(error instanceof Error ? error.message : error);
+      } finally {
+        for (const button of actions) button.disabled = false;
+      }
+    });
+
+    logout.addEventListener('click', async () => {
+      try {
+        await request({ action: 'logout' });
+        form.reset();
+        refresh();
+        await showAccount(false);
+        accountStatus.textContent = 'Signed out.';
+      } catch (error) {
+        accountStatus.textContent = String(error instanceof Error ? error.message : error);
+      }
+    });
+
+    form.addEventListener('change', refresh);
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      save.disabled = true;
+      try {
+        await request({ ...Object.fromEntries(new FormData(form)), action: 'garage' });
+        status.textContent = 'Setup saved to your web profile.';
+      } catch (error) {
+        status.textContent = String(error instanceof Error ? error.message : error);
+      } finally {
+        save.disabled = logout.hidden;
+      }
+    });
+
+    if (token) {
+      accountStatus.textContent = 'Enter your registration password to confirm this email address.';
+      void showAccount(false);
+    } else {
+      request().then(result => showAccount(!!result.signedIn)).catch(() => {
+        accountStatus.textContent = 'Profile service unavailable.';
+      });
+    }
+  }
+
+  const garage = document.querySelector<HTMLElement>('[data-garage]');
+  if (garage) setupGarage(garage);
+</script>
+
+<style>
+  .garage { max-width: 1120px; margin: 0 auto; padding: 3rem 1.5rem; }
+  .eyebrow { color: #ff5400; font-weight: 700; letter-spacing: .16em; }
+  h1 { font-size: clamp(2rem, 6vw, 4.5rem); margin: .3rem 0; }
+  .garage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1.25rem; margin-top: 2rem; }
+  .preview, form { background: #161616; padding: 1.5rem; }
+  .preview { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; align-items: end; }
+  figure { margin: 0; text-align: center; }
+  img { width: 100%; height: auto; }
+  fieldset { border: 0; margin: 0 0 1.5rem; padding: 0; }
+  legend { font-weight: 700; margin-bottom: .6rem; }
+  .choices { display: flex; flex-wrap: wrap; gap: .5rem; }
+  label { display: flex; align-items: center; gap: .4rem; background: #242424; padding: .5rem .7rem; cursor: pointer; }
+  input { accent-color: #ff5400; }
+  button { border: 0; padding: .65rem 1rem; background: #ff5400; color: #111; font: inherit; font-weight: 700; cursor: pointer; }
+  [hidden] { display: none !important; }
+  button:disabled { opacity: .5; cursor: default; }
+  [data-account] { margin-top: 1.25rem; }
+  [data-account] label { width: fit-content; margin-bottom: .5rem; }
+  [role="status"] { margin: .75rem 0 0; }
+</style>
