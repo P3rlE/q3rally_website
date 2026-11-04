@@ -49,6 +49,36 @@ function sendVerification(string $email, string $token, string $origin): void
     }
 }
 
+function deviceRequest(PDO $db, string $action, array $input, int $now): never
+{
+    $source = hash('sha256', $_SERVER['REMOTE_ADDR'] ?? '');
+    if ($action === 'device_start') {
+        throttle($db, 'device:start:' . $source, 12, $now);
+        query($db, 'DELETE FROM profile_devices WHERE expires_at <= ?', [$now]);
+        $token = bin2hex(random_bytes(32));
+        $code = strtoupper(bin2hex(random_bytes(5)));
+        query($db, 'INSERT INTO profile_devices (token_hash, code, expires_at) VALUES (?, ?, ?)',
+            [hash('sha256', $token), $code, $now + 600]);
+        reply(201, ['code' => $code, 'token' => $token, 'expiresIn' => 600]);
+    }
+
+    $token = $input['token'] ?? null;
+    if (!is_string($token) || !preg_match('/^[a-f0-9]{64}$/D', $token)) {
+        reply(401, ['error' => 'Invalid device token']);
+    }
+    $device = query($db, 'SELECT profile_id FROM profile_devices WHERE token_hash = ? AND expires_at > ?',
+        [hash('sha256', $token), $now])->fetch(PDO::FETCH_ASSOC);
+    if (!$device) {
+        reply(401, ['error' => 'Device link expired or revoked']);
+    }
+    if ($device['profile_id'] === null) {
+        reply(202, ['linked' => false]);
+    }
+    $setup = query($db, "SELECT paint, wheels FROM garage_setups WHERE profile_id = ? AND vehicle = 'alpine'",
+        [$device['profile_id']])->fetch(PDO::FETCH_ASSOC);
+    reply(200, ['linked' => true, 'setup' => $setup ?: null]);
+}
+
 $method = $_SERVER['REQUEST_METHOD'] ?? '';
 $origin = getenv('Q3RALLY_PROFILE_ORIGIN') ?: 'https://www.q3rally.com';
 if (!in_array($method, ['GET', 'POST'], true)) {
@@ -58,9 +88,6 @@ if (!in_array($method, ['GET', 'POST'], true)) {
 
 $input = [];
 if ($method === 'POST') {
-    if (($_SERVER['HTTP_ORIGIN'] ?? '') !== $origin) {
-        reply(403, ['error' => 'Same-origin requests only']);
-    }
     if (strtolower(trim(explode(';', $_SERVER['CONTENT_TYPE'] ?? '')[0])) !== 'application/json') {
         reply(415, ['error' => 'JSON required']);
     }
@@ -71,6 +98,11 @@ if ($method === 'POST') {
     $input = json_decode($raw, true);
     if (!is_array($input)) {
         reply(400, ['error' => 'Invalid request']);
+    }
+    $requestOrigin = $_SERVER['HTTP_ORIGIN'] ?? '';
+    $nativeAction = in_array($input['action'] ?? '', ['device_start', 'device_setup'], true);
+    if ($requestOrigin !== $origin && !($nativeAction && $requestOrigin === '')) {
+        reply(403, ['error' => 'Same-origin requests only']);
     }
 }
 
@@ -83,8 +115,15 @@ try {
     $db = new PDO('sqlite:' . $database, options: [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
     $db->exec('PRAGMA busy_timeout = 5000');
     $db->exec('PRAGMA foreign_keys = ON');
-    if ((int) $db->query('PRAGMA user_version')->fetchColumn() !== 2) {
+    if ((int) $db->query('PRAGMA user_version')->fetchColumn() !== 3) {
         reply(503, ['error' => 'Profile service unavailable']);
+    }
+
+    $now = time();
+    $action = $method === 'GET' ? 'status' : ($input['action'] ?? '');
+
+    if ($action === 'device_start' || $action === 'device_setup') {
+        deviceRequest($db, $action, $input, $now);
     }
 
     session_name('Q3RALLYPROFILE');
@@ -97,8 +136,6 @@ try {
         'cookie_path' => '/api/profile.php',
     ]);
 
-    $now = time();
-    $action = $method === 'GET' ? 'status' : ($input['action'] ?? '');
     $profile = ($_SESSION['expires'] ?? 0) > $now ? ($_SESSION['profile'] ?? null) : null;
     if ($action === 'status') {
         reply(200, ['signedIn' => $profile !== null]);
@@ -140,6 +177,27 @@ try {
         query($db, 'INSERT INTO profiles (id, account_id) VALUES (?, ?)', [bin2hex(random_bytes(16)), $account]);
         $db->commit();
         reply(200, ['verified' => true]);
+    }
+    if ($action === 'device_approve' || $action === 'device_revoke') {
+        if (!$profile) {
+            reply(401, ['error' => 'Sign in to manage linked devices']);
+        }
+        if ($action === 'device_revoke') {
+            query($db, 'DELETE FROM profile_devices WHERE profile_id = ?', [$profile]);
+            reply(200, ['revoked' => true]);
+        }
+        throttle($db, 'device:approve:' . $profile, 15, $now);
+        $code = $input['code'] ?? null;
+        if (!is_string($code) || !preg_match('/^[A-Fa-f0-9]{10}$/D', $code)) {
+            reply(400, ['error' => 'Enter the 10-character code shown in Q3Rally']);
+        }
+        $approved = query($db, 'UPDATE profile_devices SET profile_id = ?, code = NULL, expires_at = ?
+            WHERE code = ? AND profile_id IS NULL AND expires_at > ?',
+            [$profile, $now + 90 * 86400, strtoupper($code), $now])->rowCount();
+        if ($approved !== 1) {
+            reply(400, ['error' => 'Invalid or expired device code']);
+        }
+        reply(200, ['linked' => true]);
     }
     if ($action === 'garage') {
         if (!$profile) {

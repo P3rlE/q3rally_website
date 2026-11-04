@@ -31,6 +31,16 @@ const wheels = [
     </form>
     <button type="button" data-logout hidden>Sign out</button>
     <p role="status" data-account-status>Sign in to save your Alpine setup to your web profile.</p>
+    <section data-devices hidden>
+      <form data-link-device>
+        <label>Q3Rally device code
+          <input name="code" required minlength="10" maxlength="10" pattern="[0-9A-Fa-f]{10}" autocomplete="off" spellcheck="false" />
+        </label>
+        <button type="submit">Link game</button>
+        <button type="button" data-revoke>Revoke all game links</button>
+        <p role="status">Enter the code shown by your copy of Q3Rally.</p>
+      </form>
+    </section>
     <div class="garage-grid">
       <section class="preview" aria-label="Selected setup">
         <figure>
@@ -74,6 +84,10 @@ const wheels = [
     const logout = garage.querySelector<HTMLButtonElement>('[data-logout]')!;
     const accountStatus = garage.querySelector<HTMLElement>('[data-account-status]')!;
     const status = form.querySelector<HTMLElement>('[role="status"]')!;
+    const devices = garage.querySelector<HTMLElement>('[data-devices]')!;
+    const link = devices.querySelector<HTMLFormElement>('[data-link-device]')!;
+    const revoke = devices.querySelector<HTMLButtonElement>('[data-revoke]')!;
+    const deviceStatus = link.querySelector<HTMLElement>('[role="status"]')!;
     const save = form.querySelector<HTMLButtonElement>('button')!;
     const email = account.querySelector<HTMLInputElement>('[name="email"]')!;
     const actions = [...account.querySelectorAll<HTMLButtonElement>('button')];
@@ -106,6 +120,11 @@ const wheels = [
       account.hidden = signedIn;
       logout.hidden = !signedIn;
       save.disabled = !signedIn;
+      devices.hidden = !signedIn;
+      if (!signedIn) {
+        link.reset();
+        deviceStatus.textContent = 'Enter the code shown by your copy of Q3Rally.';
+      }
       email.required = !token;
       account.querySelector<HTMLElement>('[data-email]')!.hidden = !!token;
       for (const button of actions) button.hidden = token ? button.value !== 'verify' : button.value === 'verify';
@@ -145,6 +164,31 @@ const wheels = [
         accountStatus.textContent = 'Signed out.';
       } catch (error) {
         accountStatus.textContent = String(error instanceof Error ? error.message : error);
+      }
+    });
+
+    async function changeDevice(action: string) {
+      const buttons = [...link.querySelectorAll('button')];
+      for (const button of buttons) button.disabled = true;
+      try {
+        const code = new FormData(link).get('code');
+        await request({ action, code });
+        link.reset();
+        deviceStatus.textContent = action === 'device_approve' ? 'Game linked.' : 'Game links revoked.';
+      } catch (error) {
+        deviceStatus.textContent = String(error instanceof Error ? error.message : error);
+      } finally {
+        for (const button of buttons) button.disabled = false;
+      }
+    }
+
+    link.addEventListener('submit', event => {
+      event.preventDefault();
+      void changeDevice('device_approve');
+    });
+    revoke.addEventListener('click', () => {
+      if (confirm('Revoke access for all linked copies of Q3Rally?')) {
+        void changeDevice('device_revoke');
       }
     });
 
@@ -193,7 +237,7 @@ const wheels = [
   button { border: 0; padding: .65rem 1rem; background: #ff5400; color: #111; font: inherit; font-weight: 700; cursor: pointer; }
   [hidden] { display: none !important; }
   button:disabled { opacity: .5; cursor: default; }
-  [data-account] { margin-top: 1.25rem; }
-  [data-account] label { width: fit-content; margin-bottom: .5rem; }
+  [data-account], [data-devices] { margin-top: 1.25rem; }
+  [data-account] label, [data-devices] label { width: fit-content; margin-bottom: .5rem; }
   [role="status"] { margin: .75rem 0 0; }
 </style>
