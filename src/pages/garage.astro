@@ -168,13 +168,14 @@ const wheels = Object.entries(catalog.wheels);
     const showroomReset = garage.querySelector<HTMLButtonElement>('[data-3d-reset]')!;
     const showroomStatus = garage.querySelector<HTMLElement>('[data-3d-status]')!;
     const carImage = garage.querySelector<HTMLImageElement>('[data-preview="paint"]')!;
-    let viewer: Awaited<ReturnType<typeof import('../scripts/alpineShowroom').openAlpineShowroom>> | undefined;
+    let viewer: Awaited<ReturnType<typeof import('../scripts/vehicleShowroom').openVehicleShowroom>> | undefined;
+    let viewerVehicle = '';
     let use3d = false;
     let renderVersion = 0;
+    let loadVersion = 0;
 
-    function closeShowroom() {
+    function showPhoto() {
       renderVersion++;
-      use3d = false;
       viewer?.hide();
       showroom.hidden = true;
       carImage.classList.remove('showroom-inactive');
@@ -183,8 +184,15 @@ const wheels = Object.entries(catalog.wheels);
       showroomStatus.textContent = '';
     }
 
+    function closeShowroom() {
+      use3d = false;
+      loadVersion++;
+      showroomToggle.disabled = false;
+      showPhoto();
+    }
+
     async function refreshShowroom() {
-      if (!viewer || !use3d || vehicle.value !== 'alpine') return;
+      if (!viewer || !use3d || viewerVehicle !== vehicle.value) return;
       const version = ++renderVersion;
       const fields = new FormData(form);
       try {
@@ -203,33 +211,49 @@ const wheels = Object.entries(catalog.wheels);
       }
     }
 
-    showroomToggle.addEventListener('click', async () => {
-      if (use3d) {
-        closeShowroom();
-        return;
-      }
+    async function loadShowroom() {
+      const selected = vehicle.value;
+      const version = ++loadVersion;
+      showPhoto();
       showroomToggle.disabled = true;
       showroomStatus.textContent = 'Loading 3D view…';
       try {
-        if (!viewer) {
-          const { openAlpineShowroom } = await import('../scripts/alpineShowroom');
-          viewer = await openAlpineShowroom(showroom, garage.dataset.assets + 'alpine-3d/');
+        if (!viewer || viewerVehicle !== selected) {
+          viewer?.dispose();
+          viewer = undefined;
+          const { openVehicleShowroom } = await import('../scripts/vehicleShowroom');
+          if (version !== loadVersion) return;
+          const next = await openVehicleShowroom(showroom, garage.dataset.assets + 'showroom/', selected, vehicleName.textContent || selected);
+          if (version !== loadVersion) {
+            next.dispose();
+            return;
+          }
+          viewer = next;
+          viewerVehicle = selected;
         }
-        if (vehicle.value !== 'alpine') return;
-        use3d = true;
         await refreshShowroom();
       } catch {
+        if (version !== loadVersion) return;
         closeShowroom();
         showroomStatus.textContent = '3D preview unavailable. Showing the vehicle image.';
       } finally {
-        showroomToggle.disabled = false;
+        if (version === loadVersion) showroomToggle.disabled = false;
+      }
+    }
+
+    showroomToggle.addEventListener('click', () => {
+      if (use3d) closeShowroom();
+      else {
+        use3d = true;
+        void loadShowroom();
       }
     });
     showroomReset.addEventListener('click', () => viewer?.reset());
     showroom.addEventListener('webglcontextlost', event => {
       event.preventDefault();
       closeShowroom();
-      showroomToggle.hidden = true;
+      viewer?.dispose();
+      viewer = undefined;
       showroomStatus.textContent = '3D preview unavailable. Showing the vehicle image.';
     }, true);
     type Setup = { vehicle: string; paint: string; wheels: string };
@@ -260,8 +284,7 @@ const wheels = Object.entries(catalog.wheels);
       }
       filterWheels();
       vehicleName.textContent = car.name;
-      showroomToggle.hidden = vehicle.value !== 'alpine';
-      if (vehicle.value !== 'alpine') closeShowroom();
+
       status.textContent = setup ? 'Saved setup loaded.' : 'Preview setup';
       refresh();
     }
@@ -358,6 +381,7 @@ const wheels = Object.entries(catalog.wheels);
       try {
         await request({ action: 'logout' });
         saved.clear();
+        closeShowroom();
         form.reset();
         showVehicle();
         await showAccount(false);
@@ -393,7 +417,10 @@ const wheels = Object.entries(catalog.wheels);
     });
 
     form.addEventListener('change', event => {
-      if (event.target === vehicle) showVehicle();
+      if (event.target === vehicle) {
+        showVehicle();
+        if (use3d) void loadShowroom();
+      }
       else {
         filterWheels();
         refresh();
