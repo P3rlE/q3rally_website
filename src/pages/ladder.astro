@@ -80,6 +80,9 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
               <th class="th-rank">RANK</th>
               <th>PLAYER</th>
               <th id="lb-col3">TIME</th>
+              <th id="lb-drag-reaction" hidden>RT (s)</th>
+              <th id="lb-drag-elapsed" hidden>ET (s)</th>
+              <th id="lb-drag-trap" hidden>TRAP (km/h)</th>
               <th>VEHICLE</th>
               <th>SET ON</th>
             </tr>
@@ -470,7 +473,7 @@ function rankNameFromScore(score) {
   return RANK_NAMES[idx];
 }
 const MODE_LABELS = {
-  GT_RACING:'Racing', GT_RACING_DM:'Racing DM', GT_SPRINT:'Sprint',
+  GT_RACING:'Racing', GT_RACING_DM:'Racing DM', GT_SPRINT:'Sprint', GT_DRAG:'Drag Race',
   GT_TEAM_RACING:'Team Racing', GT_TEAM_RACING_DM:'Team Racing DM',
   GT_ELIMINATION:'Elimination', GT_LCS:'Last Car Standing',
   GT_DERBY:'Derby', GT_DEATHMATCH:'Deathmatch',
@@ -478,7 +481,7 @@ const MODE_LABELS = {
   GT_DOMINATION:'Domination', GT_KOTH:'King of the Hill',
   GT_AUTOBALL:'Autoball', GT_GHOST:'Ghost Race', GT_SINGLE_PLAYER:'Single Player',
 };
-const RACE_MODES = new Set(['GT_RACING','GT_RACING_DM','GT_SPRINT','GT_TEAM_RACING','GT_TEAM_RACING_DM']);
+const RACE_MODES = new Set(['GT_RACING','GT_RACING_DM','GT_SPRINT','GT_DRAG','GT_TEAM_RACING','GT_TEAM_RACING_DM']);
 
 let allMatches = [], mapMeta = {}, levelshotManifest = {};
 let activeSrc = 'all', activeWeather = 'all', activeMode = '', activeMap = '';
@@ -500,13 +503,14 @@ function matchesWeather(match, weather) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function canonMode(raw) {
+  if (raw === 9 || String(raw).trim() === '9') return 'GT_DRAG';
   if (!raw) return null;
   let m = String(raw).trim().toUpperCase().replace(/[\s-]+/g,'_');
   // Explicit backend sentinels are not playable leaderboard categories.
   if (['UNKNOWN', 'GT_UNKNOWN', '__UNKNOWN__', 'GT___UNKNOWN__'].includes(m)) return null;
   if (!m) return null;
   if (!m.startsWith('GT_')) m = 'GT_' + m;
-  return m;
+  return m === 'GT_DRAG_RACE' ? 'GT_DRAG' : m;
 }
 function modeLabel(m) {
   return MODE_LABELS[m] || m.replace(/^GT_/, '').replace(/_/g, ' ');
@@ -588,6 +592,32 @@ function fmtTime(ms) {
   const sec = (totalSec % 60).toFixed(3).padStart(6, '0');
   return min > 0 ? `${min}:${sec}` : `${sec}s`;
 }
+// Drag timings are one complete attempt: never combine best RT and ET from
+// different runs or fall back to lap times / score for an invalid finish.
+function dragResult(player) {
+  if (!player || player.isBot || player.dragStatus !== 'finished') return null;
+  const {reactionMs, elapsedMs, totalRaceMs, trapSpeedKph} = player;
+  if (![reactionMs, elapsedMs, totalRaceMs].every(Number.isSafeInteger)
+      || reactionMs < 0 || elapsedMs <= 0 || totalRaceMs > 120000
+      || totalRaceMs !== reactionMs + elapsedMs
+      || !Number.isFinite(trapSpeedKph) || trapSpeedKph < 0 || trapSpeedKph > 1000) return null;
+  return {totalMs: totalRaceMs, reactionMs, elapsedMs, trapSpeedKph};
+}
+function fmtDragTime(ms) {
+  return Number.isFinite(ms) && ms >= 0 ? (ms / 1000).toFixed(3) : '—';
+}
+function dragWinner(match) {
+  const players = match.players || [];
+  if (match.settings?.dragDuel === false || players.length !== 2 || players.some(p => p.isBot)) return null;
+  const finished = players.map(player => ({player, result: dragResult(player)}))
+    .filter(entry => entry.result).sort((a,b) => a.result.totalMs - b.result.totalMs);
+  if (!finished.length || (finished.length > 1 && finished[0].result.totalMs === finished[1].result.totalMs)) return null;
+  return finished[0].player;
+}
+function dragStatusLabel(player) {
+  if (dragResult(player)) return 'FINISHED';
+  return player.dragStatus === 'false_start' ? 'FALSE START' : player.dragStatus === 'dnf' ? 'DNF' : 'INVALID RESULT';
+}
 function fmtDate(d) {
   if (!d) return '—';
   return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' });
@@ -605,6 +635,10 @@ function getWinner(m) {
   const players = (m.players || []).filter(p => !p.isBot);
   if (!players.length) return null;
   const mode = canonMode(m.mode || m.gametype || '');
+  if (mode === 'GT_DRAG') {
+    const winner = dragWinner(m);
+    return winner?.name || winner?.displayName || null;
+  }
   if (RACE_MODES.has(mode)) {
     const byLap = players.filter(p => p.bestLapMs > 0).sort((a,b) => a.bestLapMs - b.bestLapMs);
     return byLap[0]?.name || players.sort((a,b) => (a.position||99)-(b.position||99))[0]?.name || null;
@@ -758,6 +792,7 @@ function renderLeaderboard() {
   document.getElementById('map-name').textContent = mapLabel(activeMap);
 
   const isRace = RACE_MODES.has(activeMode);
+  const isDrag = activeMode === 'GT_DRAG';
   const best = new Map();
 
   for (const match of filtered) {
@@ -766,7 +801,16 @@ function renderLeaderboard() {
     for (const p of (match.players || [])) {
       const name = p.name || p.displayName || '';
       if (!name) continue;
-      if (isRace) {
+      if (isDrag) {
+        const result = dragResult(p);
+        if (!result) continue;
+        const key = p.playerId || name;
+        const ex = best.get(key);
+        if (!ex || result.totalMs < ex.val) best.set(key, {
+          name, playerId: p.playerId || '', val: result.totalMs, ...result,
+          vehicle: p.vehicle||p.car||'—', date, matchId: match.matchId, isBot: false,
+        });
+      } else if (isRace) {
         const lapMs = p.bestLapMs || p.totalRaceMs || 0;
         if (!lapMs) continue;
         const ex = best.get(name);
@@ -779,21 +823,32 @@ function renderLeaderboard() {
     }
   }
 
-  let entries = [...best.entries()].map(([name, d]) => ({ name, ...d }));
+  let entries = [...best.entries()].map(([key, d]) => ({ name: d.name || key, ...d }));
   entries.sort((a,b) => isRace ? a.val - b.val : b.val - a.val);
   entries = entries.slice(0,10);
 
   document.getElementById('lb-status').style.display = 'none';
   const table = document.getElementById('lb-table');
   table.hidden = false;
-  document.getElementById('lb-col3').textContent = isRace ? 'BEST LAP' : 'SCORE';
+  document.getElementById('lb-col3').textContent = isDrag ? 'TOTAL (s)' : isRace ? 'BEST LAP' : 'SCORE';
+  for (const id of ['lb-drag-reaction', 'lb-drag-elapsed', 'lb-drag-trap']) {
+    document.getElementById(id).hidden = !isDrag;
+  }
+  if (isDrag && !entries.length) {
+    document.getElementById('lb-body').innerHTML = '';
+    table.hidden = true;
+    document.getElementById('lb-status').textContent = 'No valid finishes for this map.';
+    document.getElementById('lb-status').style.display = '';
+    return;
+  }
 
   const tbody = document.getElementById('lb-body');
   tbody.innerHTML = entries.map((e,i) => `
-    <tr class="rank-${i+1}">
-      <td class="td-rank">${i+1}</td>
+    <tr class="rank-${isDrag ? entries.findIndex(row => row.val === e.val) + 1 : i+1}">
+      <td class="td-rank">${isDrag ? entries.findIndex(row => row.val === e.val) + 1 : i+1}</td>
       <td><span class="player-link" data-player="${esc(e.name)}" data-player-id="${esc(e.playerId||'')}">${esc(e.name)}</span>${e.isBot ? ' <span class="bot-badge">BOT</span>' : ''}</td>
-      <td>${isRace ? fmtTime(e.val) : e.val}</td>
+      <td>${isDrag ? fmtDragTime(e.val) : isRace ? fmtTime(e.val) : e.val}</td>
+      ${isDrag ? `<td>${fmtDragTime(e.reactionMs)}</td><td>${fmtDragTime(e.elapsedMs)}</td><td>${e.trapSpeedKph.toFixed(1)}</td>` : ''}
       <td>${esc(e.vehicle)}</td>
       <td>${fmtDate(e.date)}</td>
     </tr>
@@ -869,10 +924,11 @@ function buildPlayerStats() {
     // For team modes: winnerTeam (int) → all players with p.team === winnerTeam get a win.
     // For individual modes: winner (string) → named player gets a win.
     // Fall back to stat-derived winner for legacy index entries that lack these fields.
-    let winnerName = m.winner || null;
+    const dragWinningPlayer = mode === 'GT_DRAG' ? dragWinner(m) : null;
+    let winnerName = mode === 'GT_DRAG' ? dragWinningPlayer?.name || null : m.winner || null;
     const winnerTeam = m.winnerTeam || 0;
 
-    if (!winnerName && !isTeamMode) {
+    if (!winnerName && !isTeamMode && mode !== 'GT_DRAG') {
       if (isRace) {
         const byLap = players.filter(p => (p.bestLapMs || 0) > 0).sort((a,b) => a.bestLapMs - b.bestLapMs);
         winnerName = byLap[0]?.name
@@ -894,11 +950,11 @@ function buildPlayerStats() {
       s.deaths += p.deaths || 0;
       // Keep the first non-empty playerId seen for this name
       if (!s.playerId && p.playerId) s.playerId = p.playerId;
-      const isWinner = isTeamMode
+      const isWinner = mode === 'GT_DRAG' ? p === dragWinningPlayer : isTeamMode
         ? (winnerTeam > 0 && p.team === winnerTeam)
         : (winnerName && name === winnerName);
       if (isWinner) s.wins++;
-      const lap = p.bestLapMs || p.totalRaceMs || 0;
+      const lap = mode === 'GT_DRAG' ? 0 : p.bestLapMs || p.totalRaceMs || 0;
       if (lap > 0 && (s.bestLapMs === 0 || lap < s.bestLapMs)) s.bestLapMs = lap;
       const tiers = p.achievementTiers;
       if (Array.isArray(tiers) && tiers.length > 0) s.achievementTiers = tiers;
@@ -1091,16 +1147,23 @@ function buildProfileHTML(p) {
     `<div class="pc-stat"><div class="pc-stat-label">${label}</div><div class="pc-stat-val">${esc(sv(val))}</div></div>`
   ).join('');
 
-  const modes = Object.entries(modeStats).map(([key, ms]) => {
+  const modeEntries = Object.entries(modeStats);
+  if (!modeEntries.some(([key]) => canonMode(key) === 'GT_DRAG') && career.dragCompleted > 0) {
+    modeEntries.push(['GT_DRAG', {wins: career.dragWins || 0, completed: career.dragCompleted,
+      bestTime: career.dragBestMs, reactionMs: career.dragBestReactionMs, elapsedMs: career.dragBestElapsedMs}]);
+  }
+  const modes = modeEntries.map(([key, ms]) => {
+    const isDrag = canonMode(key) === 'GT_DRAG';
     const isRace = RACE_MODES.has(key);
-    const third = isRace ? ['Best Lap', ms.bestTime ? fmtTime(ms.bestTime) : null]
-                         : ['Kills', ms.kills];
+    const third = isDrag ? ['Best TOTAL (s)', fmtDragTime(ms.bestTime)]
+      : isRace ? ['Best Lap', ms.bestTime ? fmtTime(ms.bestTime) : null] : ['Kills', ms.kills];
     return `<div class="pc-mode">
       <div class="pc-mode-name">${esc(modeLabel(key))}</div>
       <div class="pc-mode-stats">
         <div><div class="pc-ms-label">Wins</div><div class="pc-ms-val">${sv(ms.wins)}</div></div>
         <div><div class="pc-ms-label">Played</div><div class="pc-ms-val">${sv(ms.completed||ms.played)}</div></div>
         <div><div class="pc-ms-label">${third[0]}</div><div class="pc-ms-val">${sv(third[1])}</div></div>
+        ${isDrag ? `<div><div class="pc-ms-label">Best RT (s)</div><div class="pc-ms-val">${fmtDragTime(ms.reactionMs)}</div></div><div><div class="pc-ms-label">Best ET (s)</div><div class="pc-ms-val">${fmtDragTime(ms.elapsedMs)}</div></div>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -1130,13 +1193,23 @@ async function openMatch(matchId) {
     const m = await r.json();
     const mode = canonMode(m.mode || m.gametype || '');
     const isRace = RACE_MODES.has(mode);
+    const isDrag = mode === 'GT_DRAG';
     const map = m.map || '';
     const date = matchDate(m);
     const players = [...(m.players||[])].sort((a,b) => {
+      if (isDrag) return (dragResult(a)?.totalMs ?? Infinity) - (dragResult(b)?.totalMs ?? Infinity);
       if (isRace) { const ta = a.bestLapMs||a.totalRaceMs||99999999, tb = b.bestLapMs||b.totalRaceMs||99999999; return ta-tb; }
       return (b.score||0)-(a.score||0);
     });
-    const rows = players.map((p,i) => `<tr>
+    const rows = isDrag ? players.map(p => {
+      const result = dragResult(p);
+      const rank = result ? 1 + players.filter(other => (dragResult(other)?.totalMs ?? Infinity) < result.totalMs).length : '—';
+      return `<tr><td>${rank}</td>
+        <td class="md-player-link" data-player="${esc(p.name||'')}" data-player-id="${esc(p.playerId||'')}">${esc(p.name||'—')}</td>
+        <td>${dragStatusLabel(p)}</td><td>${result ? fmtDragTime(result.totalMs) : '—'}</td>
+        <td>${result ? fmtDragTime(result.reactionMs) : '—'}</td><td>${result ? fmtDragTime(result.elapsedMs) : '—'}</td>
+        <td>${result ? result.trapSpeedKph.toFixed(1) : '—'}</td><td>${esc(p.vehicle||'—')}</td></tr>`;
+    }).join('') : players.map((p,i) => `<tr>
       <td>${i+1}</td>
       <td class="md-player-link" data-player="${esc(p.name||'')}" data-player-id="${esc(p.playerId||'')}">${esc(p.name||'—')}${p.isBot?' <span style="color:#444;font-size:9px">BOT</span>':''}</td>
       <td>${isRace ? fmtTime(p.bestLapMs||p.totalRaceMs||0) : (p.score||0)}</td>
@@ -1154,7 +1227,7 @@ async function openMatch(matchId) {
       </div>
     </div>
     <table class="md-table">
-      <thead><tr><th>#</th><th>PLAYER</th><th>${isRace?'BEST LAP':'SCORE'}</th><th>K</th><th>D</th><th>VEHICLE</th></tr></thead>
+      <thead><tr><th>#</th><th>PLAYER</th>${isDrag ? '<th>STATUS</th><th>TOTAL (s)</th><th>RT (s)</th><th>ET (s)</th><th>TRAP (km/h)</th>' : `<th>${isRace?'BEST LAP':'SCORE'}</th><th>K</th><th>D</th>`}<th>VEHICLE</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
     content.querySelectorAll('.md-player-link').forEach(el => {
