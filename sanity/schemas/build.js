@@ -5,7 +5,7 @@ export default {
   title: 'Build / Release',
   type: 'document',
   fields: [
-    { name: 'version', title: 'Version', type: 'string', description: 'z.B. 0.8.2' },
+    { name: 'version', title: 'Version', type: 'string', description: 'Wird ohne automatisch ergänztes v angezeigt, z.B. 0.8.2 oder 0.4.1 Q3Rally Launcher.' },
     { name: 'isCurrent', title: 'Current Version', type: 'boolean', description: 'Als Download-Highlight auf der Startseite anzeigen (04/04)' },
     {
       name: 'category',
@@ -52,7 +52,7 @@ export default {
     select: { title: 'version', subtitle: 'publishedAt' },
     prepare({ title, subtitle }) {
       return {
-        title: `v${title}`,
+        title: title ?? '',
         subtitle: subtitle ? new Date(subtitle).toLocaleDateString('de-DE') : '',
       };
     },

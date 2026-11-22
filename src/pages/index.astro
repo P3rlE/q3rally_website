@@ -38,6 +38,11 @@ function getExcerpt(body: any[], maxLen = 200) {
 }
 
 const winPlatform = build?.platforms?.find(p => p.name === 'Windows');
+// Only numeric version components belong to the highlighted patch segment.
+const versionParts = (build?.version ?? '').match(/^([vV]?\d+\.\d+)(\.\d+(?:\.\d+)*)?([\s\S]*)$/);
+const versionBase = versionParts?.[1] ?? build?.version ?? '';
+const versionPatch = versionParts?.[2] ?? '';
+const versionName = versionParts?.[3]?.trim() ?? '';
 ---
 <BaseLayout>
   <!-- TOP BAR -->
@@ -82,7 +87,7 @@ const winPlatform = build?.platforms?.find(p => p.name === 'Windows');
       <div class="hero-buttons">
         <a href={`${b}/downloads`} class="btn-primary">
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="white" fill="none" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span>DOWNLOAD V{build?.version ?? '—'}<br /><small>WIN · LINUX · {winPlatform?.size ?? ''}</small></span>
+          <span>DOWNLOAD {build?.version ?? '—'}<br /><small>WIN · LINUX · {winPlatform?.size ?? ''}</small></span>
         </a>
         <a href={`${b}/media`} class="btn-secondary">
           <svg viewBox="0 0 10 12" width="14" height="14" fill="white"><polygon points="0,0 10,6 0,12"/></svg>
@@ -113,10 +118,8 @@ const winPlatform = build?.platforms?.find(p => p.name === 'Windows');
         <div class="hero-card build-card">
           <div class="card-corner-br"></div>
           <div class="card-label">Latest Build</div>
-          <div class="build-version">
-            {build.version.split('.').slice(0,2).join('.')}
-            <span>.{build.version.split('.').slice(2).join('.')}</span>
-          </div>
+          <div class="build-version">{versionBase}<span class="build-patch">{versionPatch}</span></div>
+          {versionName && <div class="build-name">{versionName}</div>}
           <div class="build-rows">
             <div class="build-row"><span class="key">Released</span><span class="val">{releaseDate}</span></div>
             <div class="build-row"><span class="key">Size</span><span class="val">{winPlatform?.size ?? '—'}</span></div>
@@ -255,7 +258,7 @@ const winPlatform = build?.platforms?.find(p => p.name === 'Windows');
       {currentBuilds.map(cb => (
         <div class="dl-build">
           <div class="dl-build-meta">
-            <span class="dl-version">v{cb.version}</span>
+            <span class="dl-version">{cb.version}</span>
             {cb.category && <span class="dl-category">{cb.category}</span>}
             {cb.publishedAt && <span class="dl-date">{formatDate(cb.publishedAt)}</span>}
           </div>
@@ -368,8 +371,9 @@ const winPlatform = build?.platforms?.find(p => p.name === 'Windows');
   .card-link:hover { color: var(--white); }
 
   /* BUILD CARD */
-  .build-version { font-family: 'Barlow Condensed', sans-serif; font-size: 48px; font-weight: 900; line-height: 1; margin-bottom: 14px; }
-  .build-version span { color: var(--orange); }
+  .build-version { font-family: 'Barlow Condensed', sans-serif; font-size: 48px; font-weight: 900; line-height: 1; margin-bottom: 14px; overflow-wrap: anywhere; }
+  .build-patch { color: var(--orange); }
+  .build-name { font-family: 'Barlow Condensed', sans-serif; font-size: 24px; font-weight: 700; line-height: 1.15; color: var(--white); margin: -6px 0 14px; overflow-wrap: anywhere; }
   .build-rows { display: flex; flex-direction: column; gap: 5px; margin-top: auto; }
   .build-row { display: flex; justify-content: space-between; font-family: 'Share Tech Mono', monospace; font-size: 10px; gap: 8px; }
   .build-row .key { color: var(--gray); text-transform: uppercase; }
