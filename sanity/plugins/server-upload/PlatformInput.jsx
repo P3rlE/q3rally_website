@@ -2,9 +2,9 @@ import { useState, useRef } from 'react';
 import { set } from 'sanity';
 import { Box, Button, Card, Flex, Stack, Text } from '@sanity/ui';
 import { UploadIcon, CheckmarkCircleIcon, ErrorOutlineIcon } from '@sanity/icons';
+import { UploadKeyInput, useUploadKey } from './UploadKeyInput.jsx';
 
 const UPLOAD_URL   = 'https://www.q3rally.com/upload/upload.php';
-const UPLOAD_TOKEN = import.meta.env.SANITY_STUDIO_UPLOAD_TOKEN ?? '';
 const CHUNK_SIZE   = 2 * 1024 * 1024; // 2 MB pro Chunk
 const MAX_RETRIES  = 3;
 
@@ -24,7 +24,7 @@ function randomId() {
 }
 
 // Einzelnen Chunk hochladen — gibt Promise<Response-JSON> zurück
-function uploadChunk(chunk, chunkIndex, totalChunks, filename, sessionId, onProgress) {
+function uploadChunk(chunk, chunkIndex, totalChunks, filename, sessionId, onProgress, uploadKey) {
   return new Promise((resolve, reject) => {
     const formData = new FormData();
     formData.append('file',          chunk);
@@ -54,13 +54,14 @@ function uploadChunk(chunk, chunkIndex, totalChunks, filename, sessionId, onProg
     xhr.timeout  = 120_000; // 2 min pro Chunk
 
     xhr.open('POST', UPLOAD_URL);
-    xhr.setRequestHeader('X-Upload-Token', UPLOAD_TOKEN);
+    xhr.setRequestHeader('X-Upload-Token', uploadKey);
     xhr.send(formData);
   });
 }
 
 export function PlatformInput(props) {
   const { onChange, renderDefault } = props;
+  const [uploadKey] = useUploadKey();
 
   const [status, setStatus]           = useState('idle');
   const [progress, setProgress]       = useState(0);
@@ -80,6 +81,11 @@ export function PlatformInput(props) {
   }
 
   async function startChunkedUpload(file) {
+    if (!uploadKey.trim()) {
+      setStatus('error');
+      setErrorMsg('Bitte zuerst den Upload-Schlüssel eingeben.');
+      return;
+    }
     abortRef.current = false;
     setStatus('uploading');
     setProgress(0);
@@ -115,7 +121,8 @@ export function PlatformInput(props) {
                 const total_sent = bytesUploaded + loaded;
                 setTransferred(total_sent);
                 setProgress(Math.round((total_sent / file.size) * 100));
-              }
+              },
+              uploadKey.trim()
             );
             lastError = null;
             break; // Chunk erfolgreich
@@ -157,13 +164,14 @@ export function PlatformInput(props) {
       {/* ── Upload-Bereich ── */}
       <Card padding={3} border radius={2}>
         <Stack space={3}>
+          <UploadKeyInput disabled={isUploading} />
           <Flex gap={2} align="center" wrap="wrap">
             <Button
               icon={UploadIcon}
               text={isUploading ? 'Lädt hoch…' : 'Datei auf Server hochladen'}
               mode="ghost"
               tone="primary"
-              disabled={isUploading}
+              disabled={isUploading || !uploadKey.trim()}
               onClick={() => !isUploading && fileInputRef.current?.click()}
             />
             {status === 'done' && (
