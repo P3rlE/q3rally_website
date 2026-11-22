@@ -38,11 +38,10 @@ function getExcerpt(body: any[], maxLen = 200) {
 }
 
 const winPlatform = build?.platforms?.find(p => p.name === 'Windows');
-// Only numeric version components belong to the highlighted patch segment.
-const versionParts = (build?.version ?? '').match(/^([vV]?\d+\.\d+)(\.\d+(?:\.\d+)*)?([\s\S]*)$/);
-const versionBase = versionParts?.[1] ?? build?.version ?? '';
-const versionPatch = versionParts?.[2] ?? '';
-const versionName = versionParts?.[3]?.trim() ?? '';
+// Keep the complete version number together and the product name on its own line.
+const versionParts = (build?.version ?? '').match(/^([vV]?\d+(?:\.\d+)+)([\s\S]*)$/);
+const versionNumber = versionParts?.[1] ?? build?.version ?? '';
+const versionName = versionParts?.[2]?.trim() ?? '';
 ---
 <BaseLayout>
   <!-- TOP BAR -->
@@ -118,7 +117,7 @@ const versionName = versionParts?.[3]?.trim() ?? '';
         <div class="hero-card build-card">
           <div class="card-corner-br"></div>
           <div class="card-label">Latest Build</div>
-          <div class="build-version">{versionBase}<span class="build-patch">{versionPatch}</span></div>
+          <div class="build-version">{versionNumber}</div>
           {versionName && <div class="build-name">{versionName}</div>}
           <div class="build-rows">
             <div class="build-row"><span class="key">Released</span><span class="val">{releaseDate}</span></div>
@@ -371,8 +370,7 @@ const versionName = versionParts?.[3]?.trim() ?? '';
   .card-link:hover { color: var(--white); }
 
   /* BUILD CARD */
-  .build-version { font-family: 'Barlow Condensed', sans-serif; font-size: 48px; font-weight: 900; line-height: 1; margin-bottom: 14px; overflow-wrap: anywhere; }
-  .build-patch { color: var(--orange); }
+  .build-version { font-family: 'Barlow Condensed', sans-serif; font-size: 48px; font-weight: 900; line-height: 1; color: var(--white); margin-bottom: 14px; overflow-wrap: anywhere; }
   .build-name { font-family: 'Barlow Condensed', sans-serif; font-size: 24px; font-weight: 700; line-height: 1.15; color: var(--white); margin: -6px 0 14px; overflow-wrap: anywhere; }
   .build-rows { display: flex; flex-direction: column; gap: 5px; margin-top: auto; }
   .build-row { display: flex; justify-content: space-between; font-family: 'Share Tech Mono', monospace; font-size: 10px; gap: 8px; }

@@ -1,7 +1,7 @@
 # Release display
 
 The Latest Build card separates the numeric version from its suffix. For
-`0.4.1 Q3Rally Launcher`, only `.1` uses the accent color; `Q3Rally Launcher`
+`0.4.1 Q3Rally Launcher`, the entire `0.4.1` is white; `Q3Rally Launcher`
 appears as a smaller white label on its own line. Two-component and nonnumeric
 release names remain supported. The selected build and stored content are unchanged.
 
@@ -37,7 +37,7 @@ change also appears at `https://q3rally.sanity.studio/`.
 
 The Astro production build and Sanity Studio build completed. A headless browser
 check verified the real Latest Build on desktop and mobile: numeric version
-`0.4.1`, accent suffix `.1`, white product label, and no product-label overflow.
+`0.4.1` entirely white, white product label, and no product-label overflow.
 All three rendered download titles matched the published Sanity version values
 exactly. Studio preview checks preserved both unprefixed and explicitly prefixed
 input.
