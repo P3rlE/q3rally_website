@@ -24,7 +24,7 @@ const links = [
     <img src={`${b}/logo.png`} alt="Q3Rally" class="logo-img" />
     <span class="logo-wordmark">Q3RALLY</span>
   </a>
-  <div class="version-badge">v{version} · DEV</div>
+  <div class="version-badge">{version} · DEV</div>
   <ul class="nav-links">
     {links.map(l => (
       <li><a href={l.href} class={active === l.href ? 'active' : ''}>{l.label}</a></li>

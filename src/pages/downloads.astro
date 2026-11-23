@@ -32,9 +32,6 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function showV(category: string) {
-  return VERSION_CATEGORIES.includes(category);
-}
 ---
 <BaseLayout title="Q3Rally — Downloads">
   <div slot="topbar" class="top-bar">
@@ -91,7 +88,7 @@ function showV(category: string) {
         return (
           <div class="release-block">
             <div class="release-meta">
-              <span class="release-version">{showV(release.category) ? `v${release.version}` : release.version}</span>
+              <span class="release-version">{release.version}</span>
               {release.isCurrent && <span class="current-badge">CURRENT</span>}
               <span class="release-date">{formatDate(release.publishedAt)}</span>
               {release.fileHash && <span class="release-hash">SIG: {release.fileHash}</span>}
@@ -217,7 +214,7 @@ function showV(category: string) {
               <details class="changelog">
                 <summary class="changelog-summary">
                   <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-                  CHANGELOG v{release.version}
+                  CHANGELOG {release.version}
                 </summary>
                 <pre class="changelog-body">{release.changelog}</pre>
               </details>
