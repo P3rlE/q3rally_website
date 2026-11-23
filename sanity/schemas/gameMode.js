@@ -5,6 +5,7 @@ export default {
       {title:'0 — Racing',value:0},{title:'1 — Racing DM',value:1},{title:'2 — Single Player',value:2},
       {title:'3 — Demolition Derby',value:3},{title:'4 — Last Car Standing',value:4},{title:'5 — Elimination',value:5},
       {title:'6 — Deathmatch',value:6},{title:'7 — Sprint',value:7},{title:'8 — Ghost Race',value:8},
+      {title:'9 — Drag Race',value:9},
       {title:'16 — Team Deathmatch',value:16},{title:'17 — Team Racing',value:17},{title:'18 — Team Racing DM',value:18},
       {title:'19 — Capture the Flag',value:19},{title:'20 — CTF4',value:20},{title:'21 — Domination',value:21},
       {title:'22 — King of the Hill',value:22},{title:'23 — Autoball',value:23},
