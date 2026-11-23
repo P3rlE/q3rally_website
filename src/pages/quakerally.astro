@@ -1,0 +1,149 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Nav from '../components/Nav.astro';
+import archive from '../data/quakerally.json';
+import { getLatestBuild } from '../lib/sanity.js';
+
+const b = import.meta.env.BASE_URL.replace(/\/$/, '');
+const build = await getLatestBuild();
+const assetUrl = (path: string) => `${b}/quakerally/${path.split('/').map(encodeURIComponent).join('/')}`;
+const full = archive.entries.find(entry => entry.id === 'qr12')!;
+const size = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
+const categoryCount = (category: string) => archive.entries.filter(entry => entry.category === category).length;
+---
+<BaseLayout title="QuakeRally Archive — Original Releases, Maps & Music | Q3Rally"
+  description="Explore the original QuakeRally mod for Quake 1: full releases, Leftovers, community tracks, recorded demos, music and mapping resources.">
+  <div slot="topbar" class="archive-topbar">Q3RALLY COMMUNITY ARCHIVE <span>QUAKE 1 MOD · HISTORICAL FILES</span></div>
+  <Nav slot="nav" active={`${b}/quakerally/`} build={build} />
+
+  <section class="archive-hero" aria-labelledby="archive-title">
+    <div class="hero-copy">
+      <p class="eyebrow">The Quake 1 years</p>
+      <h1 id="archive-title">QUAKERALLY<br /><span>ARCHIVE.</span></h1>
+      <p class="hero-intro">Before exploring today’s Q3Rally, take a drive through the original QuakeRally: a Quake 1 mod preserved through its releases, community tracks and creative tools.</p>
+      <div class="hero-actions">
+        <a class="primary-button" href={assetUrl(full.download)} download data-counter-download>Download QuakeRally 1.2 <small>{size(full.bytes)}</small></a>
+        <a class="secondary-button" href="#archive-downloads">Browse all {archive.entries.length} files</a>
+      </div>
+      <p class="requirement">Requires Quake 1. This is a historical mod, not a standalone game.</p>
+      <div class="archive-stats"><span><b>{archive.entries.length}</b> downloads</span><span><b>{categoryCount('maps')}</b> add-on map archives</span><span><b>{archive.images.length}</b> game images</span></div>
+    </div>
+    <figure class="hero-image">
+      <img src={assetUrl('images/spasm0001.png')} alt="A silver QuakeRally car approaches a chequered finish line" width="800" height="600" fetchpriority="high" />
+      <figcaption>QuakeRally in action · preserved image from the collection</figcaption>
+    </figure>
+  </section>
+
+  <section class="before-you-drive" aria-labelledby="before-title">
+    <div><p class="eyebrow">Before you drive</p><h2 id="before-title">Choose the right starting point.</h2></div>
+    <div><h3>Start with 1.2</h3><p>QuakeRally 1.2 is the main full-mod download. Keep earlier releases and their updates separate, and follow the original installation notes.</p></div>
+    <div><h3>Leftovers comes afterwards</h3><p><a href="#entry-qrlo1">Leftovers</a> requires an existing 1.2 installation and replaces files and vehicles. It was the team’s final, unsupported release.</p></div>
+    <div><h3>Demos are recorded drives</h3><p>The early <a href="#entry-qr_demo">demo archive</a> contains two replays from 1996. It is something to watch, rather than a playable trial.</p></div>
+  </section>
+
+  <section class="archive-section" id="archive-downloads" aria-labelledby="downloads-title">
+    <div class="section-heading"><div><p class="eyebrow">Preserved downloads</p><h2 id="downloads-title">Explore the collection.</h2></div><a class="text-link" href={assetUrl('catalogue.json')}>Download catalogue (JSON)</a></div>
+    <div class="archive-filters">
+      <label for="archive-search">Search the archive<input id="archive-search" type="search" placeholder="Title, author or filename" autocomplete="off" /></label>
+      <label for="archive-category">Category<select id="archive-category"><option value="all">All categories ({archive.entries.length})</option>{Object.entries(archive.categories).map(([id, label]) => <option value={id}>{label} ({categoryCount(id)})</option>)}</select></label>
+    </div>
+    <p class="results-count" id="archive-count" role="status" aria-live="polite">{archive.entries.length} downloads</p>
+    <div class="archive-grid">
+      {archive.entries.map(entry => (
+        <article id={`entry-${entry.id}`} class="archive-card" data-category={entry.category}
+          data-search={[entry.title, entry.author, entry.originalFilename, entry.description, entry.categoryLabel, entry.note].join(' ').toLowerCase()}>
+          <div class="card-label"><span>{entry.categoryLabel}</span><span class="status">{entry.status}</span></div>
+          <h3>{entry.title}</h3><p class="author">{entry.author}</p>
+          <p>{entry.description}</p>
+          {(entry.version || entry.dateLabel) && <p class="metadata">{[entry.version, entry.dateLabel].filter(Boolean).join(' · ')}</p>}
+          <p class="needs"><strong>Requires:</strong> {entry.requires}</p>
+          {entry.note && <p class="archive-note">{entry.note}</p>}
+          <a class="card-download" href={assetUrl(entry.download)} download data-counter-download>Download <span>{size(entry.downloadBytes ?? entry.bytes)}</span></a>
+          <details><summary>Readmes, provenance & checksum</summary>
+            <p class="filename">Original file: <code>{entry.originalFilename}</code></p>
+            <p>{entry.evidence}</p><p>{entry.rights}</p>
+            {entry.readmes.length > 0 ? <ul>{entry.readmes.map(readme => <li><a href={assetUrl(readme.url)}>{readme.label}</a></li>)}</ul> : <p>No readme was found in this archive.</p>}
+            <p class="checksum">Download SHA-256:<code>{entry.downloadSha256 ?? entry.sha256}</code></p>
+            {entry.originalDownload && <p><a href={assetUrl(entry.originalDownload)} download data-counter-download>Unchanged original ZIP</a><br /><span class="checksum">Original SHA-256:<code>{entry.sha256}</code></span></p>}
+          </details>
+        </article>
+      ))}
+    </div>
+    <p id="archive-empty" class="empty-state" hidden>No files match your search. Try another title, author or category.</p>
+    <noscript><p class="archive-note">All downloads are shown below. Search and category filtering require JavaScript.</p></noscript>
+  </section>
+
+  <section class="gallery-section" aria-labelledby="gallery-title">
+    <div class="section-heading"><div><p class="eyebrow">Behind the wheel</p><h2 id="gallery-title">Images from the collection.</h2></div></div>
+    <p class="section-intro">Seven game images, kept as found. Their original sources and capture dates are not established. Modern generated illustrations are excluded from this historical gallery.</p>
+    <div class="archive-gallery">{archive.images.map(image => <figure><a href={assetUrl(image.url)} aria-label={`Open image: ${image.caption}`}><img src={assetUrl(image.url)} alt={image.alt} loading="lazy" /></a><figcaption>{image.caption}</figcaption></figure>)}</div>
+  </section>
+
+  <section class="preservation" aria-labelledby="preservation-title">
+    <div><p class="eyebrow">About this archive</p><h2 id="preservation-title">Preserve the files.<br />Keep the credits.</h2></div>
+    <div><p>Original ZIPs and separately preserved readmes retain their original bytes. A clearly labelled convenience download for Macbeth’s Backyard adds its missing readme; the original ZIP is also available.</p>
+      <p>Stock maps and alternate builds have their own category. Unknown dates and conflicting version labels are left visible instead of being filled in with guesses.</p>
+      <p>Archive integrity and file checksums were checked. Historical executables were not run, and compatibility with current engines has not been tested. The included readmes remain the source for each author’s credits and usage terms.</p>
+      <a class="text-link" href={assetUrl('SHA256SUMS.txt')}>File checksums (SHA-256)</a>
+    </div>
+  </section>
+  <footer slot="footer" class="archive-footer"><a href={`${b}/`}>Q3Rally home</a><a href={`${b}/downloads`}>Current Q3Rally downloads</a><span>QuakeRally Archive · Original authors retain their respective rights.</span></footer>
+</BaseLayout>
+
+<script>
+  const search = document.querySelector<HTMLInputElement>('#archive-search');
+  const category = document.querySelector<HTMLSelectElement>('#archive-category');
+  const cards = Array.from(document.querySelectorAll<HTMLElement>('.archive-card'));
+  const counter = document.getElementById('archive-count');
+  const empty = document.getElementById('archive-empty');
+  const params = new URLSearchParams(location.search);
+  if (search && category) {
+    search.value = params.get('q') ?? '';
+    const requestedCategory = params.get('category');
+    if (requestedCategory && Array.from(category.options).some(option => option.value === requestedCategory)) category.value = requestedCategory;
+    const filter = (updateUrl = true) => {
+      const query = search.value.trim().toLowerCase();
+      let visible = 0;
+      cards.forEach(card => {
+        card.hidden = (category.value !== 'all' && card.dataset.category !== category.value) || !card.dataset.search?.includes(query);
+        if (!card.hidden) visible++;
+      });
+      if (counter) counter.textContent = `${visible} of ${cards.length} downloads`;
+      if (empty) empty.hidden = visible !== 0;
+      if (updateUrl) {
+        const url = new URL(location.href);
+        if (search.value.trim()) url.searchParams.set('q', search.value.trim()); else url.searchParams.delete('q');
+        if (category.value !== 'all') url.searchParams.set('category', category.value); else url.searchParams.delete('category');
+        history.replaceState(null, '', url);
+      }
+    };
+    const revealLinkedCard = () => {
+      const card = cards.find(card => `#${card.id}` === location.hash);
+      if (card?.hidden) { search.value = ''; category.value = 'all'; filter(); }
+      if (card) requestAnimationFrame(() => card.scrollIntoView({ block: 'start' }));
+    };
+    search.addEventListener('input', () => filter());
+    category.addEventListener('change', () => filter());
+    window.addEventListener('hashchange', revealLinkedCard);
+    filter(false);
+    revealLinkedCard();
+  }
+</script>
+
+<style>
+  .archive-topbar { padding:10px 32px; font-family:'Share Tech Mono',monospace; font-size:12px; letter-spacing:.08em; color:var(--gray-light); border-bottom:1px solid #252525; display:flex; justify-content:space-between; gap:18px; }
+  .archive-topbar span { color:var(--orange); }
+  .archive-hero { padding:72px max(28px,calc((100vw - 1440px)/2)); display:grid; grid-template-columns:1fr 1fr; gap:60px; align-items:center; background-image:var(--stripe); border-bottom:1px solid #292929; }
+  .hero-copy { min-width:0; }.eyebrow { font-family:'Share Tech Mono',monospace; text-transform:uppercase; letter-spacing:.13em; font-size:13px; color:var(--orange); margin-bottom:14px; }
+  h1,h2,h3 { font-family:'Barlow Condensed',sans-serif; font-weight:800; }h1 { font-size:clamp(54px,6vw,100px); line-height:.94; letter-spacing:-.015em; margin-bottom:26px; }h1 span { color:var(--orange); }h2 { font-size:38px; line-height:1.06; }h3 { font-size:26px; line-height:1.15; }
+  .hero-intro { color:var(--gray-light); font-size:18px; max-width:590px; line-height:1.65; }.hero-actions { display:flex; flex-wrap:wrap; gap:14px; margin:26px 0 14px; align-items:stretch; }.primary-button,.secondary-button { display:flex; align-items:center; justify-content:center; gap:12px; font-weight:700; padding:14px 18px; font-size:16px; }.primary-button { background:var(--orange); color:white; }.primary-button small { font-size:12px; font-family:'Share Tech Mono',monospace; white-space:nowrap; }.secondary-button { border:1px solid #555; }.requirement { color:var(--gray-light); font-size:14px; }.archive-stats { display:flex; flex-wrap:wrap; gap:24px; margin-top:28px; font-size:14px; color:var(--gray-light); }.archive-stats b { color:white; font-size:20px; margin-right:4px; }
+  .hero-image { min-width:0; border:1px solid #3a3a3a; background:#111; }.hero-image img { display:block; width:100%; height:auto; }.hero-image figcaption { padding:12px 16px; font-size:12px; color:var(--gray-light); font-family:'Share Tech Mono',monospace; }
+  .before-you-drive,.archive-section,.gallery-section,.preservation { padding:56px max(28px,calc((100vw - 1440px)/2)); }.before-you-drive { display:grid; grid-template-columns:1.1fr 1fr 1fr 1fr; gap:32px; background:var(--dark); border-bottom:1px solid #292929; }.before-you-drive h2 { font-size:30px; }.before-you-drive h3 { font-size:22px; margin-bottom:12px; }.before-you-drive p:not(.eyebrow) { font-size:16px; color:var(--gray-light); line-height:1.65; }.before-you-drive a,.preservation a { text-decoration:underline; text-underline-offset:3px; color:var(--orange); }
+  .section-heading { display:flex; gap:24px; justify-content:space-between; align-items:end; margin-bottom:26px; }.text-link { font-size:14px; color:var(--gray-light); text-decoration:underline; text-underline-offset:4px; }.archive-filters { display:grid; grid-template-columns:1.5fr 1fr; gap:20px; }.archive-filters label { display:flex; flex-direction:column; gap:8px; font-size:14px; font-weight:500; }.archive-filters input,.archive-filters select { font:inherit; color:white; background:var(--dark2); border:1px solid #444; border-radius:0; padding:14px; min-width:0; width:100%; font-size:16px; }.archive-filters select { appearance:none; padding-right:40px; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23bbbbbb' stroke-width='1.5'/%3E%3C/svg%3E"); background-size:16px; background-repeat:no-repeat; background-position:right 14px center; }.results-count { font-family:'Share Tech Mono',monospace; color:var(--gray-light); font-size:13px; margin:20px 0; }
+  .archive-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:22px; align-items:start; }.archive-card { padding:26px; border:1px solid #333; background:var(--dark); min-width:0; scroll-margin-top:85px; }.card-label { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; margin-bottom:16px; font-family:'Share Tech Mono',monospace; font-size:12px; color:var(--orange); }.status { color:var(--gray-light); border-left:1px solid #555; padding-left:12px; }.archive-card h3 { font-size:30px; }.archive-card p { font-size:16px; line-height:1.6; margin:16px 0; color:#ccc; }.archive-card .author { font-size:14px; color:var(--gray-light); margin:8px 0 20px; }.archive-card .metadata { font-size:13px; color:var(--gray-light); font-family:'Share Tech Mono',monospace; }.needs strong { color:white; }.archive-card .archive-note { padding:12px 14px; background:#211a15; border-left:2px solid var(--orange); font-size:14px; }.card-download { display:flex; align-items:center; justify-content:space-between; gap:16px; background:var(--orange); padding:12px 16px; color:white; font-size:16px; font-weight:700; margin:22px 0 18px; }.card-download span { font-size:13px; font-family:'Share Tech Mono',monospace; white-space:nowrap; }.primary-button:hover,.card-download:hover { background:var(--orange-dim); }.secondary-button:hover { border-color:var(--orange); }details { font-size:14px; overflow-wrap:anywhere; }summary { cursor:pointer; color:var(--gray-light); }details p,.archive-card details p { font-size:14px; }details ul { padding-left:18px; }details li { margin:10px 0; }details a { color:#ffad85; text-decoration:underline; text-underline-offset:3px; }code { overflow-wrap:anywhere; font-family:'Share Tech Mono',monospace; font-size:12px; }.checksum code { display:block; margin-top:5px; }.empty-state { padding:32px; border:1px dashed #555; color:var(--gray-light); }
+  .gallery-section { border-top:1px solid #292929; background:var(--dark); }.section-intro { color:var(--gray-light); max-width:800px; line-height:1.65; margin-bottom:28px; }.archive-gallery { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:18px; }.archive-gallery figure { background:var(--black); border:1px solid #333; }.archive-gallery img { display:block; width:100%; aspect-ratio:4/3; object-fit:contain; }.archive-gallery figcaption { color:var(--gray-light); font-family:'Share Tech Mono',monospace; font-size:12px; padding:10px 12px; }
+  .preservation { display:grid; grid-template-columns:1fr 1.5fr; gap:60px; border-top:1px solid #292929; }.preservation p:not(.eyebrow) { margin-bottom:18px; color:var(--gray-light); line-height:1.7; }.archive-footer { border-top:1px solid #333; padding:28px; display:flex; justify-content:center; flex-wrap:wrap; gap:18px 30px; color:var(--gray-light); font-size:14px; }.archive-footer a { text-decoration:underline; text-underline-offset:4px; }.archive-footer span { font-size:12px; align-self:center; }a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible { outline:2px solid var(--orange); outline-offset:5px; }[hidden] { display:none!important; }
+  @media(max-width:1100px) { .archive-hero { gap:30px; }.before-you-drive { grid-template-columns:1fr 1fr; }.archive-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.archive-gallery { grid-template-columns:repeat(3,minmax(0,1fr)); }.hero-actions { flex-direction:column; }.preservation { gap:32px; } }
+  @media(max-width:700px) { .archive-topbar { padding:10px 20px; font-size:11px; flex-wrap:wrap; gap:4px; }.archive-hero { grid-template-columns:1fr; padding:42px 20px; }.hero-copy { order:0; }.hero-image { order:1; }.before-you-drive,.archive-section,.gallery-section,.preservation { padding:36px 20px; }.before-you-drive,.preservation { grid-template-columns:1fr; gap:28px; }.archive-filters,.archive-grid { grid-template-columns:1fr; }.section-heading { align-items:start; flex-direction:column; gap:16px; }h2 { font-size:34px; }.archive-card { padding:22px; }.archive-gallery { grid-template-columns:repeat(2,minmax(0,1fr)); }.archive-stats { gap:16px; }.archive-footer { justify-content:start; padding:28px 20px; } }
+  @media(prefers-reduced-motion:reduce) { :global(html) { scroll-behavior:auto; } }
+</style>

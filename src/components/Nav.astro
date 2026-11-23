@@ -11,6 +11,7 @@ const links = [
   { href: `${b}/ladder`, label: 'Ladder' },
   { href: `${b}/news`, label: 'News' },
   { href: `${b}/media`, label: 'Media' },
+  { href: `${b}/quakerally/`, label: 'QuakeRally Archive' },
   { href: `${b}/game-modes`, label: 'Game Modes' },
   { href: `${b}/cars`, label: 'Cars' },
   { href: `${b}/maps`, label: 'Maps' },
@@ -43,7 +44,7 @@ const links = [
     </a>
   </div>
   <!-- Mobile hamburger -->
-  <button class="nav-hamburger" id="nav-hamburger" aria-label="Menu" aria-expanded="false">
+  <button class="nav-hamburger" id="nav-hamburger" aria-label="Menu" aria-expanded="false" aria-controls="mobile-menu">
     <span></span><span></span><span></span>
   </button>
 </nav>
@@ -71,12 +72,14 @@ const links = [
   btn?.addEventListener('click', () => {
     const open = menu?.classList.toggle('open');
     btn.setAttribute('aria-expanded', String(open));
+    menu?.setAttribute('aria-hidden', String(!open));
     btn.classList.toggle('open', open);
     document.body.style.overflow = open ? 'hidden' : '';
   });
   // Close on link click
   menu?.querySelectorAll('a').forEach(a => a.addEventListener('click', () => {
     menu.classList.remove('open');
+    menu.setAttribute('aria-hidden', 'true');
     btn?.classList.remove('open');
     btn?.setAttribute('aria-expanded', 'false');
     document.body.style.overflow = '';

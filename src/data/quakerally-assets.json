@@ -1,0 +1,557 @@
+[
+  {
+    "path": "catalogue.json",
+    "bytes": 53892,
+    "sha256": "2109c703ca8d7b03da3b694833543b5d42f3552c0ee9fada6cf1de40b0c750f5"
+  },
+  {
+    "path": "documentation/blm/01-blm.txt.txt",
+    "bytes": 2559,
+    "sha256": "91afe9fc23b4cc7c836cf116f1b915f15a20a72d8d76538a401064081c4900f6"
+  },
+  {
+    "path": "documentation/dmcity/01-dmcity.txt.txt",
+    "bytes": 1541,
+    "sha256": "164dddf402e3529b6751b675b8c77dc573bce95a516a15c902793a9400751eab"
+  },
+  {
+    "path": "documentation/dr1-fig8/01-DR1-FIG8.TXT.txt",
+    "bytes": 3200,
+    "sha256": "8ff9f4084b6b3a9e54428a1cb0c96cfae5d7d3643a2980186704ca06ac49c369"
+  },
+  {
+    "path": "documentation/drasticr/01-drasticr.txt.txt",
+    "bytes": 1886,
+    "sha256": "06b928aa6cfc229012c72cf6776665dff5c126c745aebc38af041d57aeeafcdc"
+  },
+  {
+    "path": "documentation/drasticw/01-draswhip.txt.txt",
+    "bytes": 1678,
+    "sha256": "b27cc1854717c6580b7ca4715e2c7fcc8de3398a3ea1a4dc47cd491e1e26761a"
+  },
+  {
+    "path": "documentation/drive/01-DRIVE.TXT.txt",
+    "bytes": 3410,
+    "sha256": "4d192dcc6f83f15fae2bc5d094dc6cb73fbdba0d5c6d8fa26c11620180e79f4a"
+  },
+  {
+    "path": "documentation/flip/01-flip.txt.txt",
+    "bytes": 1398,
+    "sha256": "cb5f8b73bdbe374a6240771e2b2db373a69dfa6faa43cd907dbf1a10028e86bc"
+  },
+  {
+    "path": "documentation/fwhl_oz/01-oz_readme.txt.txt",
+    "bytes": 1759,
+    "sha256": "a4131cadf7dff0004753d16ead52caf6d57c020b751e0345d445110fb6ea6649"
+  },
+  {
+    "path": "documentation/hummer/01-hummer12.txt.txt",
+    "bytes": 3826,
+    "sha256": "416fd250f9ca9973106825c696d33fb5c8a444a1bee2cd392fac7574d6df192b"
+  },
+  {
+    "path": "documentation/nmridge/01-nmridge.txt.txt",
+    "bytes": 2499,
+    "sha256": "ea8556885c0908da3752c92138c9f33d8dc80ebcf79c377c8ac49171a7a6c25b"
+  },
+  {
+    "path": "documentation/peejqr1/01-PeeJQR1.txt.txt",
+    "bytes": 1949,
+    "sha256": "91e59705c086d07f03392985558bfe96e72b5086775b10e43280212428cfdb1f"
+  },
+  {
+    "path": "documentation/peejqr2/01-PeeJQR2.txt.txt",
+    "bytes": 1911,
+    "sha256": "2a55e230a2ad7e4035dd0ecbeed25023acb59bdef9484adf9222bbc6028110d9"
+  },
+  {
+    "path": "documentation/qr10full/01-QRDOCS.TXT.txt",
+    "bytes": 43097,
+    "sha256": "d9495089d8a8fbdbadaaeec9bc221e3dd24b574b169d281982fe63ac68e7dc5d"
+  },
+  {
+    "path": "documentation/qr10full/02-QRALLY02.TXT.txt",
+    "bytes": 2036,
+    "sha256": "ecd959902df05cd3355db2415280e12a0c3cca566a5736a2045ca93c21a43d12"
+  },
+  {
+    "path": "documentation/qr10full/03-QRDM02.TXT.txt",
+    "bytes": 1848,
+    "sha256": "f2d4ed1d2ca544dca4f8d01e88d697d3d22706676129c900a4fd1a666020d3d9"
+  },
+  {
+    "path": "documentation/qr11a/01-qrdocs.txt.txt",
+    "bytes": 43170,
+    "sha256": "39a8fc80bf8d8d32ace25dced4bb9bb2f1d3ac40285e9bf647a2ca1bf0f18d89"
+  },
+  {
+    "path": "documentation/qr12/01-QRDOCS.TXT.txt",
+    "bytes": 42935,
+    "sha256": "14412d7c69752e8f61d70c2c0662f7345399dd29e1df5ac74f324ef67fc5568f"
+  },
+  {
+    "path": "documentation/qr12/02-QRALLY02.TXT.txt",
+    "bytes": 2036,
+    "sha256": "ecd959902df05cd3355db2415280e12a0c3cca566a5736a2045ca93c21a43d12"
+  },
+  {
+    "path": "documentation/qr12/03-QRDM03.TXT.txt",
+    "bytes": 1698,
+    "sha256": "3785e3d5b2abe945bea71f934a93573c39f0d19d78040900bbc4eea41a40df0e"
+  },
+  {
+    "path": "documentation/qr12/04-QRDM02.TXT.txt",
+    "bytes": 1848,
+    "sha256": "f2d4ed1d2ca544dca4f8d01e88d697d3d22706676129c900a4fd1a666020d3d9"
+  },
+  {
+    "path": "documentation/qr_demo/01-README.TXT.txt",
+    "bytes": 4406,
+    "sha256": "a898b7a96a576b2e879b4991acec71f49217748096eaf45e6c1612bcc2325d55"
+  },
+  {
+    "path": "documentation/qrally01/01-mapinfo-qrally01.txt.txt",
+    "bytes": 540,
+    "sha256": "025cf4114774977fbe9374de447fc4fdba17c56b9e083b2aa60559a7cb45a73e"
+  },
+  {
+    "path": "documentation/qrally02/01-mapinfo-qrally02.txt.txt",
+    "bytes": 516,
+    "sha256": "2d2c1253f77c6874b42d4faa8d33594a4ccc151848abb3bd5727b694fbe8d22f"
+  },
+  {
+    "path": "documentation/qrally03/01-mapinfo-qrally03.txt.txt",
+    "bytes": 337,
+    "sha256": "ec2cb549abd4d86891e1bbc022219647c243a13b4e0c6c8ff7ff71c988f3ceec"
+  },
+  {
+    "path": "documentation/qrallymusic/01-qracer.txt.txt",
+    "bytes": 388,
+    "sha256": "3cc339268a4b36bcaacb3eafcdcbca11c605003b3bc8638832309aa8af7d1dbf"
+  },
+  {
+    "path": "documentation/qrcircuit/01-qrcircuit.txt.txt",
+    "bytes": 2266,
+    "sha256": "91a2f4a0ef2f64115bad376885dd443510416785822f90ecac97d1f6fc6d5a85"
+  },
+  {
+    "path": "documentation/qrdaf01/01-qrdaf01.txt.txt",
+    "bytes": 4114,
+    "sha256": "36672c7c08927a65dea799fa794361df7eea3e46e861a469b7492ae9a6c38366"
+  },
+  {
+    "path": "documentation/qrlo1/01-leftovers.txt.txt",
+    "bytes": 11313,
+    "sha256": "e84c71c047ab0f5c3578fcbc88b7aaef37c3e746c00cd1e64a86e90ee2f43925"
+  },
+  {
+    "path": "documentation/qrlo1/02-QRdocs.txt.txt",
+    "bytes": 44623,
+    "sha256": "4fc01ad82051a182929fe1dbd7f70f525759b51eb472a1a28b48552073cc3ec3"
+  },
+  {
+    "path": "documentation/qrwad11/01-qrallyWAD.txt.txt",
+    "bytes": 1174,
+    "sha256": "fbea768e71d78fbc5802d4863acc8c01b799b0a3c61a6a23ab4c329bd747673e"
+  },
+  {
+    "path": "documentation/quakerally_docs/01-specs.htm.txt",
+    "bytes": 8540,
+    "sha256": "34d8cfaed4aaaa7b51a0dc5e1d283c84ff5fa1f05f24ba148710b8960c37525e"
+  },
+  {
+    "path": "documentation/quakerally_docs/02-qrentities.htm.txt",
+    "bytes": 22022,
+    "sha256": "43fb67c70b0a3d2f7e2c9b0c599412fad74ca4c669ff7276512bf9dc18e9d133"
+  },
+  {
+    "path": "documentation/quakerally_docs/03-qr_docs.html.txt",
+    "bytes": 38584,
+    "sha256": "fe0e87c3b4f736b424c16c3c88e2f6e574eb6bd44d15987743c854beef040d60"
+  },
+  {
+    "path": "documentation/quakerally_docs/04-TODO.TXT.txt",
+    "bytes": 6767,
+    "sha256": "fd4226df1e672dabe3d2c380472cdb34ac6c6297b1185b007116434fde06ed0f"
+  },
+  {
+    "path": "documentation/quakerally_docs/05-trackFAQ.htm.txt",
+    "bytes": 5016,
+    "sha256": "66648fec14c4848954aabda2f69bc8ea24a364362b79fe408c2456e4ed314464"
+  },
+  {
+    "path": "documentation/racecity/01-racecity.txt.txt",
+    "bytes": 3077,
+    "sha256": "84ae54e8e3f5b31cfe148ce553488131568a69dff36bff24b1d05c4df3c81733"
+  },
+  {
+    "path": "documentation/racecity_visd/01-racecity.txt.txt",
+    "bytes": 3231,
+    "sha256": "85819309881e7b59450dd00aca04d643c4783cd7282bd49326b4b9c9982ce271"
+  },
+  {
+    "path": "documentation/rivrace2/01-rivrace2.txt.txt",
+    "bytes": 4236,
+    "sha256": "bb0350273f3b549426044ce99c8be33cc3de7ee2f1592346180dc190a60e12b8"
+  },
+  {
+    "path": "documentation/roadkill1/01-roadkill1.txt.txt",
+    "bytes": 1518,
+    "sha256": "00a0303df1291e262b0143d309ad88bc2503796f0ecfe351aa86b830e2571f9e"
+  },
+  {
+    "path": "documentation/roadrun/01-RoadRun.txt.txt",
+    "bytes": 1281,
+    "sha256": "bbaaa4a3bc0bd3921f874f6d2c467aa403ed9f007a1063554def87ccd8880fad"
+  },
+  {
+    "path": "documentation/sub-aqua/01-sub-aqua.txt.txt",
+    "bytes": 3895,
+    "sha256": "e51da9fac0f1fd9304715149112cbc1a59a1f313723a894e35de788f42eaa7b4"
+  },
+  {
+    "path": "documentation/udriveby/01-UDRIVEBY.TXT.txt",
+    "bytes": 5773,
+    "sha256": "4cc740639545e3adc1ef448bed684a882edf181f0118c0df2484ae0b8630baee"
+  },
+  {
+    "path": "documentation/vulcan/01-vulcan.txt.txt",
+    "bytes": 3942,
+    "sha256": "6e4ebfbdc4c1b8a9c9234696eb3b698948d5e05d16d9858bebc3f3b1850d8c69"
+  },
+  {
+    "path": "files/demos/qr_demo.zip",
+    "bytes": 2074262,
+    "sha256": "0fc91936221f38c3f9639ab86af72776caea24844911099391e21a5e1728b8ff"
+  },
+  {
+    "path": "files/docs/quakerally_docs.zip",
+    "bytes": 25475,
+    "sha256": "5c9d246212854e5e42991f39d5fedaf21cb5bda9b74ff9cbd11252554c393bed"
+  },
+  {
+    "path": "files/mapping/qr_maps.zip",
+    "bytes": 25843,
+    "sha256": "08b523eb7a9276b25a203b955a13830a412fd624b4b39952d76f95420880039f"
+  },
+  {
+    "path": "files/mapping/qrgallery.zip",
+    "bytes": 43013,
+    "sha256": "dc53db01d7edd3e37b92c62d743bdd47e389b002c19a69dd62463ddc6f814c4b"
+  },
+  {
+    "path": "files/mapping/qrWAD11.zip",
+    "bytes": 420739,
+    "sha256": "bfd6f2df194727edbeae308a33d88402ba326e6e28ae9108a105effb6a609261"
+  },
+  {
+    "path": "files/maps/blm.zip",
+    "bytes": 492150,
+    "sha256": "ccf435d4138457246bfe17cb685c59af2434ce074df394161e70454cc5ffec20"
+  },
+  {
+    "path": "files/maps/dmcity.zip",
+    "bytes": 285327,
+    "sha256": "2f076e196abd59e87f897aed2a022a838aee8cd93904131b8db5317ea7a33eea"
+  },
+  {
+    "path": "files/maps/dr1-fig8.zip",
+    "bytes": 96035,
+    "sha256": "40fc812c1fcd5a6e89272cef87dab6b019e3273ceea10e53cbf5d09906322adb"
+  },
+  {
+    "path": "files/maps/drasticr.zip",
+    "bytes": 547924,
+    "sha256": "8c26e6bf52db709fbe3bdf4c12ef884c52fb4388edd3db09c6580757d7796775"
+  },
+  {
+    "path": "files/maps/drasticw.zip",
+    "bytes": 341841,
+    "sha256": "fade4233e2be3708fbbbba90e96c19601258a8ec52e1ded539460cd1ed839804"
+  },
+  {
+    "path": "files/maps/drive.zip",
+    "bytes": 260554,
+    "sha256": "da68563f960984417252ab6682a3cfe2724a65a5a8a533c4923320beab75d293"
+  },
+  {
+    "path": "files/maps/flip.zip",
+    "bytes": 212926,
+    "sha256": "6b627a42508aada7da1ba05ad9856eaa5b0cc514dfdac197d2fef1b372f18bc1"
+  },
+  {
+    "path": "files/maps/macbeth-with-readme.zip",
+    "bytes": 676831,
+    "sha256": "7329f88b8279dd543e351feab00bfb43a8c3703bf97dcc4078a0bbd08de9e7d3"
+  },
+  {
+    "path": "files/maps/macbeth.zip",
+    "bytes": 674678,
+    "sha256": "64f3afd2e6446c58065f15bfd39dac072e0e89a34bfa67d21462bf3cc2312b32"
+  },
+  {
+    "path": "files/maps/nmridge.zip",
+    "bytes": 379834,
+    "sha256": "928335ee6468dfb3c47b465cc068f4df86e0bfc731c6e0e2b24bc62836e7d574"
+  },
+  {
+    "path": "files/maps/peejqr1.zip",
+    "bytes": 164585,
+    "sha256": "596e030cdbf134095050b20ab3fdacd779bbe2b6a8ef1c1ccc5d4f3adea89c73"
+  },
+  {
+    "path": "files/maps/peejqr2.zip",
+    "bytes": 186629,
+    "sha256": "f46719149c559d4027094336263498fc14e3c164b0a66604f6664883a6088eca"
+  },
+  {
+    "path": "files/maps/qrcircuit.zip",
+    "bytes": 98804,
+    "sha256": "070d59249bf4479d6feee446592233f8c39ffd38bfdf59f0f527e87e9930a246"
+  },
+  {
+    "path": "files/maps/qrdaf01.zip",
+    "bytes": 353078,
+    "sha256": "5417886b47ad79eb9f71cf6185128fd63df0533d21ff84e964116af8725f619a"
+  },
+  {
+    "path": "files/maps/racecity.zip",
+    "bytes": 512265,
+    "sha256": "d3fc00cacce50f69a567b78066085616e8eeccf99aeacb11cd357decd73181c1"
+  },
+  {
+    "path": "files/maps/racecity_visd.zip",
+    "bytes": 529604,
+    "sha256": "652d7991671ad8ec45caba76c199a7f3037e366223f4404de26a00b778d86793"
+  },
+  {
+    "path": "files/maps/rivrace2.zip",
+    "bytes": 346887,
+    "sha256": "ed6e02d1b5be1e4ddfb6ade5e50b5b166d959226eb2282ad3054543a42bc2dcd"
+  },
+  {
+    "path": "files/maps/roadkill1.zip",
+    "bytes": 293948,
+    "sha256": "43b5bad21edb2b19ab1b35b8e7d56a1bb8988de916745021e05ae53fee2fb40e"
+  },
+  {
+    "path": "files/maps/roadrun.zip",
+    "bytes": 714724,
+    "sha256": "3963dc507f8f466d5a413c970c500b6af61a8a62c6105a3ae8918b85ad99908e"
+  },
+  {
+    "path": "files/maps/sub-aqua.zip",
+    "bytes": 536602,
+    "sha256": "c979f4be022323704cf6278f37f80279768b92e379bd536d5497d2e5b52bdecb"
+  },
+  {
+    "path": "files/maps/udriveby.zip",
+    "bytes": 678638,
+    "sha256": "af5a7978e7621808730d9e6e386111eb7cdbb99451b1a7b4bd16c78ba7bc6494"
+  },
+  {
+    "path": "files/maps/vulcan.zip",
+    "bytes": 262691,
+    "sha256": "71485a4d736c13b70fab4926882c8c5706c4621a501a29f992b92f4d0c6c690d"
+  },
+  {
+    "path": "files/music/qrallymusic.zip",
+    "bytes": 1179708,
+    "sha256": "8a4b4f2ac119506f5003eb425ec7a35ec57735e9d9b450e11a3a6a44914dce91"
+  },
+  {
+    "path": "files/readmes/blm.txt",
+    "bytes": 2495,
+    "sha256": "009044b0ecf6d5790067236bc4ea3b7ee930b79199e8cec9a3e00ffe9e624d4c"
+  },
+  {
+    "path": "files/readmes/dmcity.txt",
+    "bytes": 1495,
+    "sha256": "d2218c7621bf6d7749ab31cf3bd83a0e3e5bce015c4996e27ab88e2267c88118"
+  },
+  {
+    "path": "files/readmes/dr1-fig8.txt",
+    "bytes": 3118,
+    "sha256": "9ec4c06e2cb7808999c6b657045a691b6c3d3653f03c0185ee3d41236c0b17e6"
+  },
+  {
+    "path": "files/readmes/drasticr.txt",
+    "bytes": 1887,
+    "sha256": "e83eed9bb7f5e66bd971d1220c306f36ae5199d60030a40b90f2b5794e45fb41"
+  },
+  {
+    "path": "files/readmes/drasticw.txt",
+    "bytes": 1847,
+    "sha256": "b9ff6508ddc9d1eefee7da180f76f8a73851aea0347e0201b13cdb4b9955dc65"
+  },
+  {
+    "path": "files/readmes/drive.txt",
+    "bytes": 3321,
+    "sha256": "5d600271d7d215e6e0479d8ae1e6afc469acb5f9fc97913ea77d46925e86d746"
+  },
+  {
+    "path": "files/readmes/flip.txt",
+    "bytes": 1356,
+    "sha256": "ae9cd353fc0119d4daa1ec9414ccbdedd0f0f461b4da00df8511cbdd0e31c726"
+  },
+  {
+    "path": "files/readmes/macbeth.txt",
+    "bytes": 1675,
+    "sha256": "839452a3dec8731f9a56f71ed15d93771b471f798d69e33653121984e4aeca7f"
+  },
+  {
+    "path": "files/readmes/nmridge.txt",
+    "bytes": 2499,
+    "sha256": "ea8556885c0908da3752c92138c9f33d8dc80ebcf79c377c8ac49171a7a6c25b"
+  },
+  {
+    "path": "files/readmes/peejqr1.txt",
+    "bytes": 1888,
+    "sha256": "6bedce40ca061a355698f249994a6d921694c331a99a37294efcfb36291d4172"
+  },
+  {
+    "path": "files/readmes/peejqr2.txt",
+    "bytes": 1851,
+    "sha256": "5e6e7e4cd8fa41b8380d76bf54d5e65682b00acb49d7161efa7232e05505dbb1"
+  },
+  {
+    "path": "files/readmes/qrcircuit.txt",
+    "bytes": 2194,
+    "sha256": "7160d0421d3341616500a7cd88c9046f1158114f947bb0d110f27a7b997f1970"
+  },
+  {
+    "path": "files/readmes/qrdaf01.txt",
+    "bytes": 4016,
+    "sha256": "2f24c96ed827f42340a1296d8bf9e11d6f623e28223a43541b17aa3d23903ba9"
+  },
+  {
+    "path": "files/readmes/racecity.txt",
+    "bytes": 3004,
+    "sha256": "8e901834dada1d6807c2c26de10931ebdc03e9970b4bccd8ee6bc6338cff8f5a"
+  },
+  {
+    "path": "files/readmes/racecity_visd.txt",
+    "bytes": 3157,
+    "sha256": "3d3cce406374a73af6f2f16d09ed32e1ab034f5cdc1c2c5a283f0bb0f3b2989b"
+  },
+  {
+    "path": "files/readmes/rivrace2.txt",
+    "bytes": 4236,
+    "sha256": "bb0350273f3b549426044ce99c8be33cc3de7ee2f1592346180dc190a60e12b8"
+  },
+  {
+    "path": "files/readmes/roadkill1.txt",
+    "bytes": 1518,
+    "sha256": "00a0303df1291e262b0143d309ad88bc2503796f0ecfe351aa86b830e2571f9e"
+  },
+  {
+    "path": "files/readmes/roadrun.txt",
+    "bytes": 1281,
+    "sha256": "bbaaa4a3bc0bd3921f874f6d2c467aa403ed9f007a1063554def87ccd8880fad"
+  },
+  {
+    "path": "files/readmes/sub-aqua.txt",
+    "bytes": 3806,
+    "sha256": "914433175af2d67c996bbcb510668f8f95467b8a15e3939fbdabdec0a496857a"
+  },
+  {
+    "path": "files/readmes/udriveby.txt",
+    "bytes": 5773,
+    "sha256": "4cc740639545e3adc1ef448bed684a882edf181f0118c0df2484ae0b8630baee"
+  },
+  {
+    "path": "files/readmes/vulcan.txt",
+    "bytes": 3942,
+    "sha256": "6e4ebfbdc4c1b8a9c9234696eb3b698948d5e05d16d9858bebc3f3b1850d8c69"
+  },
+  {
+    "path": "files/releases/qr10full.zip",
+    "bytes": 7972446,
+    "sha256": "251a94cd0d9e84788241444810be7e81cd2ad46b63f954e23d7b5e6895ee97b9"
+  },
+  {
+    "path": "files/releases/qr12.zip",
+    "bytes": 9885866,
+    "sha256": "a4f269389472256fd54236de4bae2443abf1bd3214d2dec7719c2cd79dc083bb"
+  },
+  {
+    "path": "files/stock-maps/qrally01.zip",
+    "bytes": 597457,
+    "sha256": "5b2720d33176bfdd4794022cbac99e5884b303bcc313eaeee90cd7e03f4f8d11"
+  },
+  {
+    "path": "files/stock-maps/qrally02.zip",
+    "bytes": 505645,
+    "sha256": "d057eedccb409aa4f75b3f63c000da57c46133945b19b86feb1bb905d0c30892"
+  },
+  {
+    "path": "files/stock-maps/qrally03.zip",
+    "bytes": 640611,
+    "sha256": "86f8845d910addd89630077f868ffa6d72582480ab6a69dfe270efaf11aad3fd"
+  },
+  {
+    "path": "files/updates/qr10b_up.zip",
+    "bytes": 163744,
+    "sha256": "f9e56f18f55a8e6ef7aaed8dc3eb430beeffa6bc02cd1037c1faed8997f0ad21"
+  },
+  {
+    "path": "files/updates/qr10c_up.zip",
+    "bytes": 164461,
+    "sha256": "6869631a0072a3c97cd857074916c52a67029ccfadd4b232ae37aaea9f1f7aa9"
+  },
+  {
+    "path": "files/updates/qr11a.zip",
+    "bytes": 471694,
+    "sha256": "3f7f4ea98b0b4b48f6f2e1f9a8c9c9365d7b2a7c43fc3c5c4b855c3ea12ff968"
+  },
+  {
+    "path": "files/updates/qrlo1.zip",
+    "bytes": 4086037,
+    "sha256": "0b575ac4871ea14926ebfb376675917e4c3c654ac00bb7f49a2277d6e8f1a0a5"
+  },
+  {
+    "path": "files/vehicles/fwhl_oz.ZIP",
+    "bytes": 31672,
+    "sha256": "831dbd1de14741230b1687908503a3126e5f02409a4188aaf6ac16c0635df664"
+  },
+  {
+    "path": "files/vehicles/hummer.ZIP",
+    "bytes": 37938,
+    "sha256": "d33a086bf4c958d051af28cc3fdd8ea503466237445e7805b336caeae0ddd27b"
+  },
+  {
+    "path": "images/1.png",
+    "bytes": 50940,
+    "sha256": "989b1b03daa98a2e5fa1ca2e05e659fdfd852cfe396a3ea031b98ea075717fad"
+  },
+  {
+    "path": "images/2.jpg",
+    "bytes": 25422,
+    "sha256": "a4e6945fb5e2bbdc311854b63af71f0320cc80c98dee708cbd2bb0063b96cfff"
+  },
+  {
+    "path": "images/3.webp",
+    "bytes": 24028,
+    "sha256": "049124edc634823713d886af48c4bb76e60893d99b3abde98a2084a0b38e47b5"
+  },
+  {
+    "path": "images/4.jpg",
+    "bytes": 28042,
+    "sha256": "d50b7623ab0c0a8ea7bd52c706c8979ea420c234a0d3fcabe4e38689e0b2df96"
+  },
+  {
+    "path": "images/qr12c.jpg",
+    "bytes": 10451,
+    "sha256": "9a760100e2d217c351d3902e07df0baf887dc17f73c9a2b217c0e56c59efc764"
+  },
+  {
+    "path": "images/spasm0001.png",
+    "bytes": 820991,
+    "sha256": "51765e4fa8cdcfd2b224f65fdb1dd992802200142bf25e13f41d3c23ad631966"
+  },
+  {
+    "path": "images/spasm0007.1.png",
+    "bytes": 719005,
+    "sha256": "8724d08873ccfe50429cd8e19a99c7dfa06aa3681140b1d4a0ad4f980deedcb2"
+  }
+]
