@@ -2,9 +2,9 @@ import { useState, useRef } from 'react';
 import { set, unset } from 'sanity';
 import { Box, Button, Card, Flex, Stack, Text, TextInput } from '@sanity/ui';
 import { UploadIcon, CheckmarkCircleIcon, ErrorOutlineIcon } from '@sanity/icons';
+import { UploadKeyInput, useUploadKey } from './UploadKeyInput.jsx';
 
 const UPLOAD_URL    = 'https://www.q3rally.com/upload/upload.php';
-const UPLOAD_TOKEN  = import.meta.env.SANITY_STUDIO_UPLOAD_TOKEN ?? '';
 
 function formatBytes(bytes) {
   if (!bytes) return '0 B';
@@ -14,6 +14,7 @@ function formatBytes(bytes) {
 
 export function ServerUploadInput(props) {
   const { value, onChange, elementProps } = props;
+  const [uploadKey] = useUploadKey();
 
   const [status, setStatus]         = useState('idle');   // idle | uploading | done | error
   const [progress, setProgress]     = useState(0);
@@ -31,6 +32,11 @@ export function ServerUploadInput(props) {
   }
 
   function uploadFile(file) {
+    if (!uploadKey.trim()) {
+      setStatus('error');
+      setErrorMsg('Bitte zuerst den Upload-Schlüssel eingeben.');
+      return;
+    }
     setStatus('uploading');
     setProgress(0);
     setTransferred(0);
@@ -81,7 +87,7 @@ export function ServerUploadInput(props) {
     };
 
     xhr.open('POST', UPLOAD_URL);
-    xhr.setRequestHeader('X-Upload-Token', UPLOAD_TOKEN);
+    xhr.setRequestHeader('X-Upload-Token', uploadKey.trim());
     xhr.send(formData);
   }
 
@@ -101,6 +107,7 @@ export function ServerUploadInput(props) {
       />
 
       {/* Upload-Button */}
+      <UploadKeyInput disabled={isUploading} />
       <Flex gap={2} align="center" wrap="wrap">
         <Button
           icon={UploadIcon}
@@ -108,7 +115,7 @@ export function ServerUploadInput(props) {
           mode="ghost"
           tone="primary"
           onClick={() => !isUploading && fileInputRef.current?.click()}
-          disabled={isUploading}
+          disabled={isUploading || !uploadKey.trim()}
         />
         {status === 'done' && (
           <Flex align="center" gap={1}>
