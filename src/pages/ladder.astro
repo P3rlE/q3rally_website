@@ -44,6 +44,10 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
     <a class="admin-link" href="https://ladder.q3rally.com/admin.php">ADMIN ↗</a>
   </div>
 
+  <div class="bot-filter-bar">
+    <label class="bot-filter"><input id="hide-bots" type="checkbox" /> Hide bots</label>
+  </div>
+
   <!-- ── LEADERBOARD TAB ── -->
   <div id="tab-leaderboard" class="tab-panel active">
     <div class="lb-toolbar">
@@ -247,6 +251,9 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
   .mode-tab:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
   .mode-tab.active { color: var(--orange); border-color: var(--orange); background: rgba(255,85,0,0.08); }
   .ladder-filters { display: flex; flex-direction: column; justify-content: center; align-items: flex-end; gap: 8px; padding: 14px 0 14px 24px; border-left: 1px solid #1a1a1a; flex: 0 0 auto; }
+  .bot-filter-bar { display: flex; justify-content: flex-end; padding: 12px 80px; background: var(--dark2); border-bottom: 1px solid #1e1e1e; }
+  .bot-filter { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; color: var(--white); font-size: 14px; cursor: pointer; }
+  .bot-filter input { width: 18px; height: 18px; accent-color: var(--orange); }
   .source-toggle { display: flex; gap: 0; align-items: center; flex-wrap: wrap; }
   .src-btn { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gray); padding: 5px 12px; border: 1px solid #252525; background: none; cursor: pointer; transition: color 0.15s, border-color 0.15s, background 0.15s; margin-left: -1px; }
   .src-btn.active { color: var(--orange); border-color: var(--orange); background: rgba(255,85,0,0.05); z-index: 1; position: relative; }
@@ -411,6 +418,7 @@ const IMG_BASE  = 'https://ladder.q3rally.com/images';
     /* MAIN TABS */
     .main-tabs { padding: 0 16px; overflow-x: auto; }
     .main-tab { padding: 14px 16px; font-size: 9px; white-space: nowrap; }
+    .bot-filter-bar { padding: 8px 16px; }
 
     /* LEADERBOARD TOOLBAR */
     .lb-toolbar { padding: 0 16px; flex-wrap: wrap; gap: 0; }
@@ -485,7 +493,35 @@ const RACE_MODES = new Set(['GT_RACING','GT_RACING_DM','GT_SPRINT','GT_DRAG','GT
 
 let allMatches = [], mapMeta = {}, levelshotManifest = {};
 let activeSrc = 'all', activeWeather = 'all', activeMode = '', activeMap = '';
+let hideBots = false;
 let rankingsSort = 'wins', rankingsSearch = '';
+
+// Index entries normally contain a boolean; older reports can use strings or aliases.
+function isBot(player) {
+  for (const value of [player?.isBot, player?.is_bot, player?.bot, player?.botPlayer,
+    player?.isAI, player?.isAi, player?.ai, player?.stats?.isBot,
+    player?.stats?.is_bot, player?.stats?.bot, player?.result?.isBot,
+    player?.result?.is_bot, player?.result?.bot]) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number' && Number.isFinite(value)) return value !== 0;
+    if (typeof value !== 'string') continue;
+    const flag = value.trim().toLowerCase();
+    if (['1','true','yes','y','ja','bot','ai','cpu','computer','on','t'].includes(flag)) return true;
+    if (['0','false','no','n','nein','human','player','real','off','f'].includes(flag)) return false;
+  }
+  return false;
+}
+function visibleMatches() {
+  return hideBots ? allMatches.filter(m => (m.players || []).some(p => !isBot(p))) : allMatches;
+}
+
+document.getElementById('hide-bots').addEventListener('change', event => {
+  hideBots = event.target.checked;
+  buildModeTabs();
+  renderLeaderboard();
+  renderActivity();
+  renderRankings();
+});
 
 // The index uses a string; the full match payload uses weather.condition.
 // Older matches count as dry, matching the standalone Ladder.
@@ -541,7 +577,7 @@ function mapshotHTML(map) {
     const weather = new Set();
     let last = null;
     for (const m of matches) {
-      (m.players || []).filter(p => !p.isBot && (p.playerId || p.name)).forEach(p => players.add(p.playerId || p.name));
+      (m.players || []).filter(p => !isBot(p) && (p.playerId || p.name)).forEach(p => players.add(p.playerId || p.name));
       const mode = canonMode(m.mode || m.gametype || '');
       if (mode) modes.add(modeLabel(mode));
       weather.add(weatherLabel(m));
@@ -595,7 +631,7 @@ function fmtTime(ms) {
 // Drag timings are one complete attempt: never combine best RT and ET from
 // different runs or fall back to lap times / score for an invalid finish.
 function dragResult(player) {
-  if (!player || player.isBot || player.dragStatus !== 'finished') return null;
+  if (!player || isBot(player) || player.dragStatus !== 'finished') return null;
   const {reactionMs, elapsedMs, totalRaceMs, trapSpeedKph} = player;
   if (![reactionMs, elapsedMs, totalRaceMs].every(Number.isSafeInteger)
       || reactionMs < 0 || elapsedMs <= 0 || totalRaceMs > 120000
@@ -608,7 +644,7 @@ function fmtDragTime(ms) {
 }
 function dragWinner(match) {
   const players = match.players || [];
-  if (match.settings?.dragDuel === false || players.length !== 2 || players.some(p => p.isBot)) return null;
+  if (match.settings?.dragDuel === false || players.length !== 2 || players.some(p => isBot(p))) return null;
   const finished = players.map(player => ({player, result: dragResult(player)}))
     .filter(entry => entry.result).sort((a,b) => a.result.totalMs - b.result.totalMs);
   if (!finished.length || (finished.length > 1 && finished[0].result.totalMs === finished[1].result.totalMs)) return null;
@@ -632,7 +668,7 @@ function fmtDateShort(d) {
 }
 function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function getWinner(m) {
-  const players = (m.players || []).filter(p => !p.isBot);
+  const players = (m.players || []).filter(p => !isBot(p));
   if (!players.length) return null;
   const mode = canonMode(m.mode || m.gametype || '');
   if (mode === 'GT_DRAG') {
@@ -674,19 +710,22 @@ async function fetchLevelshots() {
 function updateHeader() {
   const players = new Set(), modes = new Set();
   let last = null;
-  for (const m of allMatches) {
+  const matches = visibleMatches();
+  for (const m of matches) {
     const mode = canonMode(m.mode || m.gametype || '');
     if (mode) modes.add(mode);
-    (m.players || []).forEach(p => p.name && players.add(p.name));
+    (m.players || []).forEach(p => {
+      if ((!hideBots || !isBot(p)) && p.name) players.add(p.name);
+    });
     const d = matchDate(m);
     if (d && (!last || d > last)) last = d;
   }
   const fmt = n => n.toLocaleString('de-DE');
-  document.getElementById('hs-matches').textContent = fmt(allMatches.length);
+  document.getElementById('hs-matches').textContent = fmt(matches.length);
   document.getElementById('hs-players').textContent = fmt(players.size);
   document.getElementById('hs-modes').textContent = fmt(modes.size);
   document.getElementById('hs-updated').textContent = last ? fmtDateShort(last) : '—';
-  document.getElementById('tb-matches').textContent = fmt(allMatches.length);
+  document.getElementById('tb-matches').textContent = fmt(matches.length);
   document.getElementById('tb-players').textContent = fmt(players.size);
 }
 
@@ -726,13 +765,15 @@ document.querySelectorAll('.weather-btn').forEach(btn => {
 function buildModeTabs() {
   updateHeader();
   const modeSet = new Set();
-  for (const m of allMatches) {
+  for (const m of visibleMatches()) {
     const mode = canonMode(m.mode || m.gametype || '');
     if (mode) modeSet.add(mode);
   }
   const modes = [...modeSet];
-  if (!modes.length) return;
-  if (!activeMode) activeMode = modes[0];
+  if (!modes.includes(activeMode)) {
+    activeMode = modes[0] || '';
+    activeMap = '';
+  }
 
   const container = document.getElementById('mode-tabs');
   container.innerHTML = '';
@@ -754,7 +795,7 @@ function buildModeTabs() {
 
 // ── Leaderboard ───────────────────────────────────────────────────────────────
 function getFiltered() {
-  return allMatches.filter(m => {
+  return visibleMatches().filter(m => {
     if (activeSrc === 'online' && m.source === 'offline') return false;
     if (activeSrc === 'offline' && m.source !== 'offline') return false;
     return matchesWeather(m, activeWeather);
@@ -762,16 +803,14 @@ function getFiltered() {
 }
 
 function renderLeaderboard() {
-  if (!activeMode) { document.getElementById('lb-status').textContent = 'No data.'; return; }
+  if (!activeMode) { clearLeaderboard('No data.'); return; }
   const filtered = getFiltered().filter(m => canonMode(m.mode || m.gametype || '') === activeMode);
 
   const mapSet = new Set();
   for (const m of filtered) { const map = m.map || ''; if (map) mapSet.add(map); }
   const maps = [...mapSet].sort();
   if (!maps.length) {
-    document.getElementById('lb-status').textContent = 'No matches for this mode.';
-    document.getElementById('lb-status').style.display = '';
-    document.getElementById('lb-table').hidden = true;
+    clearLeaderboard('No matches for this mode.');
     return;
   }
   if (!activeMap || !maps.includes(activeMap)) activeMap = maps[0];
@@ -799,6 +838,7 @@ function renderLeaderboard() {
     if ((match.map || '').toLowerCase() !== activeMap.toLowerCase()) continue;
     const date = matchDate(match);
     for (const p of (match.players || [])) {
+      if (hideBots && isBot(p)) continue;
       const name = p.name || p.displayName || '';
       if (!name) continue;
       if (isDrag) {
@@ -814,11 +854,11 @@ function renderLeaderboard() {
         const lapMs = p.bestLapMs || p.totalRaceMs || 0;
         if (!lapMs) continue;
         const ex = best.get(name);
-        if (!ex || lapMs < ex.val) best.set(name, { val: lapMs, vehicle: p.vehicle||p.car||'—', date, matchId: match.matchId, isBot: !!p.isBot });
+        if (!ex || lapMs < ex.val) best.set(name, { val: lapMs, vehicle: p.vehicle||p.car||'—', date, matchId: match.matchId, isBot: isBot(p) });
       } else {
         const score = p.score || p.rawScore || 0;
         const ex = best.get(name);
-        if (!ex || score > ex.val) best.set(name, { val: score, kills: p.kills||0, deaths: p.deaths||0, vehicle: p.vehicle||p.car||'—', date, matchId: match.matchId, isBot: !!p.isBot });
+        if (!ex || score > ex.val) best.set(name, { val: score, kills: p.kills||0, deaths: p.deaths||0, vehicle: p.vehicle||p.car||'—', date, matchId: match.matchId, isBot: isBot(p) });
       }
     }
   }
@@ -859,9 +899,20 @@ function renderLeaderboard() {
   );
 }
 
+function clearLeaderboard(message) {
+  activeMap = '';
+  document.getElementById('lb-status').textContent = message;
+  document.getElementById('lb-status').style.display = '';
+  document.getElementById('lb-table').hidden = true;
+  document.getElementById('lb-body').innerHTML = '';
+  document.getElementById('map-select').innerHTML = '';
+  document.getElementById('map-levelshot').innerHTML = '';
+  document.getElementById('map-name').textContent = '';
+}
+
 // ── Recent Activity ───────────────────────────────────────────────────────────
 function renderActivity() {
-  const sorted = [...allMatches].sort((a,b) => {
+  const sorted = [...visibleMatches()].sort((a,b) => {
     const da = matchDate(a), db = matchDate(b);
     if (!da && !db) return 0; if (!da) return 1; if (!db) return -1;
     return db - da;
@@ -876,7 +927,7 @@ function renderActivity() {
     const map = m.map || '';
     const date = matchDate(m);
     const winner = getWinner(m);
-    const humanPlayers = (m.players || []).filter(p => !p.isBot);
+    const humanPlayers = (m.players || []).filter(p => !isBot(p));
     const names = humanPlayers.slice(0,4).map(p => esc(p.name||'')).join(', ')
       + (humanPlayers.length > 4 ? ` +${humanPlayers.length-4}` : '');
     const srcClass = m.source === 'offline' ? 'src-offline' : 'src-online';
@@ -940,9 +991,11 @@ function buildPlayerStats() {
     }
 
     for (const p of players) {
+      // Determine winners from the complete roster before filtering displayed players.
+      if (hideBots && isBot(p)) continue;
       const name = p.name;
       const key = p.playerId || name;
-      if (!map.has(key)) map.set(key, { name, playerId: p.playerId || '', wins:0, matches:0, kills:0, deaths:0, bestLapMs:0, isBot: !!p.isBot, achievementTiers: null, playerScore: 0 });
+      if (!map.has(key)) map.set(key, { name, playerId: p.playerId || '', wins:0, matches:0, kills:0, deaths:0, bestLapMs:0, isBot: isBot(p), achievementTiers: null, playerScore: 0 });
       const s = map.get(key);
       s.name = name;
       s.matches++;
@@ -1211,7 +1264,7 @@ async function openMatch(matchId) {
         <td>${result ? result.trapSpeedKph.toFixed(1) : '—'}</td><td>${esc(p.vehicle||'—')}</td></tr>`;
     }).join('') : players.map((p,i) => `<tr>
       <td>${i+1}</td>
-      <td class="md-player-link" data-player="${esc(p.name||'')}" data-player-id="${esc(p.playerId||'')}">${esc(p.name||'—')}${p.isBot?' <span style="color:#444;font-size:9px">BOT</span>':''}</td>
+      <td class="md-player-link" data-player="${esc(p.name||'')}" data-player-id="${esc(p.playerId||'')}">${esc(p.name||'—')}${isBot(p)?' <span style="color:#444;font-size:9px">BOT</span>':''}</td>
       <td>${isRace ? fmtTime(p.bestLapMs||p.totalRaceMs||0) : (p.score||0)}</td>
       <td>${p.kills||0}</td><td>${p.deaths||0}</td>
       <td>${esc(p.vehicle||'—')}</td>
