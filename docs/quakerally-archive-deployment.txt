@@ -1,0 +1,58 @@
+QUAKERALLY ARCHIVE
+
+Placement
+The English archive lives at /quakerally/. Navigation links to it on every
+page. A teaser appears on the Downloads page and in the homepage's About
+section; the homepage footer also links to the archive. Historical Quake 1
+files stay separate from the current Sanity-backed Q3Rally release list.
+
+Content
+src/data/quakerally.json contains 38 curated records and seven game images.
+It preserves uncertain dates, patch dependencies and filename discrepancies.
+Historical readmes and original ZIPs remain unchanged. Only the clearly
+labelled Macbeth convenience ZIP adds the separately preserved original
+readme. The unchanged original ZIP remains available as another download.
+
+Binary assets
+The archive files are supplied separately in public/quakerally/, rather than
+adding historical ZIPs and executables to the source repository. Keep this
+directory on the server between builds. The prepared transport package
+contains the complete asset directory, the changed sources and checksums.
+Do not deploy the German curation preview as a replacement website.
+
+After extracting assets, run from the website root:
+  node tools/verify-quakerally-archive.mjs
+This checks every asset against src/data/quakerally-assets.json and checks
+that the catalogue links and download metadata agree with the manifest.
+
+The archive itself needs no Sanity import, schema change or upload token.
+The existing website build still uses its normal public Sanity settings.
+Archive downloads use the website's existing data-counter-download hooks.
+
+Source baseline
+This change is stacked on PR #4, codex/release-version-display. Merge that
+version-display PR first, then retarget this change to main if needed.
+For the running server, verify the three existing source files against
+DEPLOYMENT-MANIFEST.json before replacing them. Preserve unrelated files
+including the Ladder, Garage and private service configuration.
+
+Server rollout
+1. Inspect/extract the transport package into a new staging directory.
+2. Verify PACKAGE-SHA256SUMS.txt, source preconditions and free disk space.
+3. Back up all replaced sources and the currently served dist directory.
+4. Under the site's existing /tmp/q3rally-build.lock, install only the files
+   listed in DEPLOYMENT-MANIFEST.json; retain existing ownership/read modes.
+5. Run the asset verifier. Build the SERVER'S COMPLETE source tree to a fresh
+   output directory, using its existing dependencies and public settings.
+   Do not publish the local preview's dist tree, which is not a copy of all
+   custom server pages. Check that the new build retains those pages.
+6. Verify the built assets with:
+     node tools/verify-quakerally-archive.mjs /absolute/build/path/quakerally
+7. Install new /quakerally/ assets and /_astro/ scripts before publishing the
+   new HTML. Retain old hashed scripts so existing pages keep working.
+   Use same-filesystem temporary names plus rename for individual HTML files.
+   Rebuild and publish all existing pages that use the shared navigation.
+8. Check /quakerally/, Downloads, homepage, mobile navigation, filters and a
+   real download through the public site. Keep the backup for rollback.
+
+The operator is guided through actual server commands one at a time.

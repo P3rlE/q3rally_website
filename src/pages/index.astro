@@ -1,6 +1,7 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Nav from '../components/Nav.astro';
+import ArchiveTeaser from '../components/ArchiveTeaser.astro';
 import { getLatestBuild, getNewsPosts, getCounts, getCars, getMaps, getScreenshots, getCurrentBuilds, getGameModes, urlFor } from '../lib/sanity.js';
 
 import { mergeGameModes } from '../data/gameModes.js';
@@ -233,6 +234,7 @@ const versionName = versionParts?.[2]?.trim() ?? '';
         Pickup-style powerups, weapons, jump pads, secret routes — everything you
         remember from arena shooters, behind the wheel.
       </p>
+      <ArchiveTeaser />
       <div class="stats-grid">
         <div class="stat-item"><div class="stat-num-big">20+</div><div class="stat-lbl">Years in Development</div></div>
         <div class="stat-item"><div class="stat-num-big">{counts.cars}</div><div class="stat-lbl">Vehicles</div></div>
@@ -305,6 +307,7 @@ const versionName = versionParts?.[2]?.trim() ?? '';
         <li><a href={`${b}/powerups`}>Powerups / Holdables</a></li>
         <li><a href={`${b}/weapons`}>Rearfire Weapons</a></li>
         <li><a href={`${b}/roadside`}>Roadside Objects</a></li>
+        <li><a href={`${b}/quakerally/`}>QuakeRally Archive</a></li>
       </ul>
     </div>
     <div>

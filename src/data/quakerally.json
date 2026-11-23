@@ -1,0 +1,1144 @@
+{
+  "curatedOn": "2026-11-23",
+  "categories": {
+    "releases": "Full releases",
+    "updates": "Updates & Leftovers",
+    "demos": "Recorded demos",
+    "maps": "Add-on maps",
+    "vehicles": "Vehicles & wheels",
+    "music": "Music",
+    "mapping": "Mapping resources",
+    "docs": "Documentation",
+    "stock-maps": "Stock maps & variants"
+  },
+  "entries": [
+    {
+      "id": "qr12",
+      "source": "Releases/qr12.zip",
+      "category": "releases",
+      "categoryLabel": "Full releases",
+      "title": "QuakeRally 1.2",
+      "author": "Impact Development Team",
+      "description": "The complete Quake 1 mod package. Start here if you want to explore the original QuakeRally.",
+      "version": "1.2",
+      "dateLabel": "",
+      "requires": "Quake 1. This is a mod, not a standalone game.",
+      "note": "Includes a historical launcher. Compatibility with current engines has not been tested.",
+      "evidence": "RALLY/PROGS.DAT reports v1.2. The ZIP includes the main data, maps and RALLY/QRDOCS.TXT.",
+      "status": "Start here",
+      "rights": "The historical documentation restricts sale, CD-ROM distribution and use of the assets in other products. No blanket open-source licence is claimed for the models, textures or music. See the original documentation.",
+      "bytes": 9885866,
+      "sha256": "a4f269389472256fd54236de4bae2443abf1bd3214d2dec7719c2cd79dc083bb",
+      "originalFilename": "qr12.zip",
+      "download": "files/releases/qr12.zip",
+      "readmes": [
+        {
+          "label": "Archived text: RALLY/QRDOCS.TXT (UTF-8 reading copy)",
+          "url": "documentation/qr12/01-QRDOCS.TXT.txt"
+        },
+        {
+          "label": "Archived text: RALLY/MAPS/QRALLY02.TXT (UTF-8 reading copy)",
+          "url": "documentation/qr12/02-QRALLY02.TXT.txt"
+        },
+        {
+          "label": "Archived text: RALLY/MAPS/QRDM03.TXT (UTF-8 reading copy)",
+          "url": "documentation/qr12/03-QRDM03.TXT.txt"
+        },
+        {
+          "label": "Archived text: RALLY/MAPS/QRDM02.TXT (UTF-8 reading copy)",
+          "url": "documentation/qr12/04-QRDM02.TXT.txt"
+        }
+      ]
+    },
+    {
+      "id": "qrlo1",
+      "source": "Releases/qrlo1.zip",
+      "category": "updates",
+      "categoryLabel": "Updates & Leftovers",
+      "title": "QuakeRally: Leftovers",
+      "author": "Impact Development Team",
+      "description": "The final release: more maps, vehicle replacements and unfinished material from Ultimate Rally.",
+      "version": "Leftovers / in-game version 1.2b",
+      "dateLabel": "March 1998",
+      "requires": "An existing QuakeRally 1.2 installation and Quake 1.",
+      "note": "Replaces existing files and vehicles. Released without support by the original team.",
+      "evidence": "rally/leftovers.txt is dated 3/98, calls this the final release, and explicitly requires QuakeRally v1.2. PROGS.DAT reports v1.2b.",
+      "status": "Requires 1.2",
+      "rights": "The historical documentation restricts sale, CD-ROM distribution and use of the assets in other products. No blanket open-source licence is claimed for the models, textures or music. See the original documentation.",
+      "bytes": 4086037,
+      "sha256": "0b575ac4871ea14926ebfb376675917e4c3c654ac00bb7f49a2277d6e8f1a0a5",
+      "originalFilename": "qrlo1.zip",
+      "download": "files/updates/qrlo1.zip",
+      "readmes": [
+        {
+          "label": "Archived text: rally/leftovers.txt (UTF-8 reading copy)",
+          "url": "documentation/qrlo1/01-leftovers.txt.txt"
+        },
+        {
+          "label": "Archived text: rally/QRdocs.txt (UTF-8 reading copy)",
+          "url": "documentation/qrlo1/02-QRdocs.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "qr10full",
+      "source": "Releases/qr10full.zip",
+      "category": "releases",
+      "categoryLabel": "Full releases",
+      "title": "QuakeRally 1.0",
+      "author": "Impact Development Team",
+      "description": "The early full mod release, preserved in its original self-extracting archive wrapper.",
+      "version": "1.0",
+      "dateLabel": "",
+      "requires": "Quake 1.",
+      "note": "The outer ZIP contains qr10full.exe, a self-extracting ZIP container. It was inspected without running the executable.",
+      "evidence": "The nested ZIP has 22 entries including the main PAKs, maps and QRDOCS.TXT. PROGS.DAT reports v1.0.",
+      "status": "Earlier release",
+      "rights": "The historical documentation restricts sale, CD-ROM distribution and use of the assets in other products. No blanket open-source licence is claimed for the models, textures or music. See the original documentation.",
+      "bytes": 7972446,
+      "sha256": "251a94cd0d9e84788241444810be7e81cd2ad46b63f954e23d7b5e6895ee97b9",
+      "originalFilename": "qr10full.zip",
+      "download": "files/releases/qr10full.zip",
+      "readmes": [
+        {
+          "label": "Archived text: qr10full.exe!RALLY/QRDOCS.TXT (UTF-8 reading copy)",
+          "url": "documentation/qr10full/01-QRDOCS.TXT.txt"
+        },
+        {
+          "label": "Archived text: qr10full.exe!RALLY/MAPS/QRALLY02.TXT (UTF-8 reading copy)",
+          "url": "documentation/qr10full/02-QRALLY02.TXT.txt"
+        },
+        {
+          "label": "Archived text: qr10full.exe!RALLY/MAPS/QRDM02.TXT (UTF-8 reading copy)",
+          "url": "documentation/qr10full/03-QRDM02.TXT.txt"
+        }
+      ]
+    },
+    {
+      "id": "qr10b_up",
+      "source": "Releases/qr10b_up.zip",
+      "category": "updates",
+      "categoryLabel": "Updates & Leftovers",
+      "title": "QuakeRally 1.0b update",
+      "author": "Impact Development Team",
+      "description": "A historical update containing program data, configuration and a small additional PAK.",
+      "version": "1.0b",
+      "dateLabel": "",
+      "requires": "An existing QuakeRally installation. The exact required base and patch order are not confirmed.",
+      "note": "Not a full release.",
+      "evidence": "PROGS.DAT reports v1.0b. The main game assets are absent; PAK2 only adds wrongway.wav.",
+      "status": "Historical update",
+      "rights": "The historical documentation restricts sale, CD-ROM distribution and use of the assets in other products. No blanket open-source licence is claimed for the models, textures or music. See the original documentation.",
+      "bytes": 163744,
+      "sha256": "f9e56f18f55a8e6ef7aaed8dc3eb430beeffa6bc02cd1037c1faed8997f0ad21",
+      "originalFilename": "qr10b_up.zip",
+      "download": "files/updates/qr10b_up.zip",
+      "readmes": []
+    },
+    {
+      "id": "qr10c_up",
+      "source": "Releases/qr10c_up.zip",
+      "category": "updates",
+      "categoryLabel": "Updates & Leftovers",
+      "title": "QuakeRally 1.0c update",
+      "author": "Impact Development Team",
+      "description": "A historical update containing program data, configuration and a small additional PAK.",
+      "version": "1.0c",
+      "dateLabel": "",
+      "requires": "An existing QuakeRally installation. The exact required base and patch order are not confirmed.",
+      "note": "Not a full release.",
+      "evidence": "PROGS.DAT reports v1.0c. The main game assets are absent; PAK2 only adds wrongway.wav.",
+      "status": "Historical update",
+      "rights": "The historical documentation restricts sale, CD-ROM distribution and use of the assets in other products. No blanket open-source licence is claimed for the models, textures or music. See the original documentation.",
+      "bytes": 164461,
+      "sha256": "6869631a0072a3c97cd857074916c52a67029ccfadd4b232ae37aaea9f1f7aa9",
+      "originalFilename": "qr10c_up.zip",
+      "download": "files/updates/qr10c_up.zip",
+      "readmes": []
+    },
+    {
+      "id": "qr11a",
+      "source": "Releases/qr11a.zip",
+      "category": "updates",
+      "categoryLabel": "Updates & Leftovers",
+      "title": "QuakeRally 1.1 beta",
+      "author": "Impact Development Team",
+      "description": "An intermediate update with additional models, preserved under its original filename qr11a.zip.",
+      "version": "In-game version 1.1beta",
+      "dateLabel": "",
+      "requires": "An existing QuakeRally installation. The exact required base version is not confirmed.",
+      "note": "The filename and internal version differ. This archive is not presented as a confirmed stable 1.1a release.",
+      "evidence": "PROGS.DAT reports v1.1beta. The PAK0/PAK1 base assets are not included.",
+      "status": "Beta update",
+      "rights": "The historical documentation restricts sale, CD-ROM distribution and use of the assets in other products. No blanket open-source licence is claimed for the models, textures or music. See the original documentation.",
+      "bytes": 471694,
+      "sha256": "3f7f4ea98b0b4b48f6f2e1f9a8c9c9365d7b2a7c43fc3c5c4b855c3ea12ff968",
+      "originalFilename": "qr11a.zip",
+      "download": "files/updates/qr11a.zip",
+      "readmes": [
+        {
+          "label": "Archived text: qrdocs.txt (UTF-8 reading copy)",
+          "url": "documentation/qr11a/01-qrdocs.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "qr_demo",
+      "source": "Releases/qr_demo.zip",
+      "category": "demos",
+      "categoryLabel": "Recorded demos",
+      "title": "Early QuakeRally recorded demos",
+      "author": "Ridah & Sumaleth",
+      "description": "Two recorded drives by Ridah and Sumaleth. These are replays to watch, not a playable trial.",
+      "version": "",
+      "dateLabel": "1996",
+      "requires": "Quake 1 and the separate qrally mod directory supplied in this archive.",
+      "note": "The original readme uses: quake -game qrally +playdemo rallyrid (or rallysum). Playback with current engines has not been tested.",
+      "evidence": "qrally/README.TXT is headed demos 11/2/96; the PAK contains rallyrid.dem and rallysum.dem. The day/month order is ambiguous.",
+      "status": "Replays, not a playable demo",
+      "rights": "The historical documentation restricts sale, CD-ROM distribution and use of the assets in other products. No blanket open-source licence is claimed for the models, textures or music. See the original documentation.",
+      "bytes": 2074262,
+      "sha256": "0fc91936221f38c3f9639ab86af72776caea24844911099391e21a5e1728b8ff",
+      "originalFilename": "qr_demo.zip",
+      "download": "files/demos/qr_demo.zip",
+      "readmes": [
+        {
+          "label": "Archived text: qrally/README.TXT (UTF-8 reading copy)",
+          "url": "documentation/qr_demo/01-README.TXT.txt"
+        }
+      ]
+    },
+    {
+      "id": "blm",
+      "source": "Maps/blm.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "Blue Lake Mountain",
+      "author": "Ben \"Krash\" Ackland",
+      "description": "Race around a lake inside an extinct volcano, with tunnels and steep drops.",
+      "version": "",
+      "dateLabel": "",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 492150,
+      "sha256": "ccf435d4138457246bfe17cb685c59af2434ce074df394161e70454cc5ffec20",
+      "originalFilename": "blm.zip",
+      "download": "files/maps/blm.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/blm.txt"
+        },
+        {
+          "label": "Archived text: QUAKE/ID1/maps/blm.txt (UTF-8 reading copy)",
+          "url": "documentation/blm/01-blm.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "dmcity",
+      "source": "Maps/dmcity.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "Deathmatch City",
+      "author": "Frank Decher (FNS)",
+      "description": "A QuakeRally deathmatch arena for car combat.",
+      "version": "",
+      "dateLabel": "28 July 1997",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 285327,
+      "sha256": "2f076e196abd59e87f897aed2a022a838aee8cd93904131b8db5317ea7a33eea",
+      "originalFilename": "dmcity.zip",
+      "download": "files/maps/dmcity.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/dmcity.txt"
+        },
+        {
+          "label": "Archived text: dmcity.txt (UTF-8 reading copy)",
+          "url": "documentation/dmcity/01-dmcity.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "dr1-fig8",
+      "source": "Maps/dr1-fig8.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "DeathRace – Figure 8",
+      "author": "Kevin Anderson (Dachande-SoD / RaPToR-SoD)",
+      "description": "A figure-eight track with obstacles, weapons and plenty of checkpoints.",
+      "version": "",
+      "dateLabel": "28 July 1997",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "The loose readme differs from the archived copy by an extra blank line. Both are preserved.",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 96035,
+      "sha256": "40fc812c1fcd5a6e89272cef87dab6b019e3273ceea10e53cbf5d09906322adb",
+      "originalFilename": "dr1-fig8.zip",
+      "download": "files/maps/dr1-fig8.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/dr1-fig8.txt"
+        },
+        {
+          "label": "Archived text: DR1-FIG8.TXT (UTF-8 reading copy)",
+          "url": "documentation/dr1-fig8/01-DR1-FIG8.TXT.txt"
+        }
+      ]
+    },
+    {
+      "id": "drasticr",
+      "source": "Maps/drasticr.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "Drastic Rally",
+      "author": "Mark Wheeler",
+      "description": "A racing and deathmatch map by Mark Wheeler.",
+      "version": "",
+      "dateLabel": "August 1997; readme dates: 9. / 26 August",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "The archived and loose readmes give different August dates. This does not establish a separate BSP release.",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 547924,
+      "sha256": "8c26e6bf52db709fbe3bdf4c12ef884c52fb4388edd3db09c6580757d7796775",
+      "originalFilename": "drasticr.zip",
+      "download": "files/maps/drasticr.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/drasticr.txt"
+        },
+        {
+          "label": "Archived text: drasticr.txt (UTF-8 reading copy)",
+          "url": "documentation/drasticr/01-drasticr.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "drasticw",
+      "source": "Maps/drasticw.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "Drastic Whiplash",
+      "author": "Mark Wheeler",
+      "description": "A small driving map. The separately preserved readme says it has no start/finish entities.",
+      "version": "",
+      "dateLabel": "August 1997; readme dates: 9. / 26 August",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "The BSP is named draswhip.bsp. Without start/finish entities, the map is unsuitable for regular lap-counted races. The loose readme contains additional information.",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "No start/finish entities",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 341841,
+      "sha256": "fade4233e2be3708fbbbba90e96c19601258a8ec52e1ded539460cd1ed839804",
+      "originalFilename": "drasticw.zip",
+      "download": "files/maps/drasticw.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/drasticw.txt"
+        },
+        {
+          "label": "Archived text: draswhip.txt (UTF-8 reading copy)",
+          "url": "documentation/drasticw/01-draswhip.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "drive",
+      "source": "Maps/drive.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "A Drive in the Park",
+      "author": "Paul Healey",
+      "description": "A wooded QuakeRally deathmatch map designed for eight players.",
+      "version": "",
+      "dateLabel": "24 July 1997",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "The original ZIP must remain unchanged. The readme limits distribution to Internet/BBS and excludes commercial servers and commercial physical media without permission.",
+      "bytes": 260554,
+      "sha256": "da68563f960984417252ab6682a3cfe2724a65a5a8a533c4923320beab75d293",
+      "originalFilename": "drive.zip",
+      "download": "files/maps/drive.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/drive.txt"
+        },
+        {
+          "label": "Archived text: DRIVE.TXT (UTF-8 reading copy)",
+          "url": "documentation/drive/01-DRIVE.TXT.txt"
+        }
+      ]
+    },
+    {
+      "id": "flip",
+      "source": "Maps/flip.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "Flip",
+      "author": "Phil Clark (MiSERY)",
+      "description": "A QuakeRally track with deathmatch elements.",
+      "version": "",
+      "dateLabel": "22 July 1997",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "The author line names Phil Clark; the copyright section names Brian Hess. The original credits are preserved and the discrepancy remains unresolved.",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 212926,
+      "sha256": "6b627a42508aada7da1ba05ad9856eaa5b0cc514dfdac197d2fef1b372f18bc1",
+      "originalFilename": "flip.zip",
+      "download": "files/maps/flip.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/flip.txt"
+        },
+        {
+          "label": "Archived text: flip.txt (UTF-8 reading copy)",
+          "url": "documentation/flip/01-flip.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "macbeth",
+      "source": "Maps/macbeth.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "Macbeth’s Backyard",
+      "author": "Karl Waskiewicz (BoBo)",
+      "description": "An obstacle-heavy track with weapons, wind effects and a five-lap limit.",
+      "version": "",
+      "dateLabel": "8 November 1997; readme updated 9 November",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "The original ZIP contains only the BSP. The main download adds the separately preserved original readme without changing the BSP. The original ZIP is also available.",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 674678,
+      "sha256": "64f3afd2e6446c58065f15bfd39dac072e0e89a34bfa67d21462bf3cc2312b32",
+      "originalFilename": "macbeth.zip",
+      "download": "files/maps/macbeth-with-readme.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/macbeth.txt"
+        }
+      ],
+      "originalDownload": "files/maps/macbeth.zip",
+      "downloadBytes": 676831,
+      "downloadSha256": "7329f88b8279dd543e351feab00bfb43a8c3703bf97dcc4078a0bbd08de9e7d3"
+    },
+    {
+      "id": "nmridge",
+      "source": "Maps/nmridge.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "Nightmare Ridge",
+      "author": "Mike Marechal (Dion)",
+      "description": "A mountain-road circuit with long drops, tunnels and a jump.",
+      "version": "",
+      "dateLabel": "23 July 1997",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 379834,
+      "sha256": "928335ee6468dfb3c47b465cc068f4df86e0bfc731c6e0e2b24bc62836e7d574",
+      "originalFilename": "nmridge.zip",
+      "download": "files/maps/nmridge.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/nmridge.txt"
+        },
+        {
+          "label": "Archived text: nmridge.txt (UTF-8 reading copy)",
+          "url": "documentation/nmridge/01-nmridge.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "peejqr1",
+      "source": "Maps/peejqr1.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "8 Of Fun",
+      "author": "Paul \"PeeJ\" James",
+      "description": "A figure-eight circuit for racing with weapons.",
+      "version": "",
+      "dateLabel": "1 November 1997",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 164585,
+      "sha256": "596e030cdbf134095050b20ab3fdacd779bbe2b6a8ef1c1ccc5d4f3adea89c73",
+      "originalFilename": "peejqr1.zip",
+      "download": "files/maps/peejqr1.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/peejqr1.txt"
+        },
+        {
+          "label": "Archived text: PeeJQR1.txt (UTF-8 reading copy)",
+          "url": "documentation/peejqr1/01-PeeJQR1.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "peejqr2",
+      "source": "Maps/peejqr2.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "Tubular Cataclysm",
+      "author": "Paul \"PeeJ\" James",
+      "description": "A historical beta track by PeeJ.",
+      "version": "",
+      "dateLabel": "30 October 1997",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "Explicitly labelled Beta Release in the original readme.",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Beta map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 186629,
+      "sha256": "f46719149c559d4027094336263498fc14e3c164b0a66604f6664883a6088eca",
+      "originalFilename": "peejqr2.zip",
+      "download": "files/maps/peejqr2.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/peejqr2.txt"
+        },
+        {
+          "label": "Archived text: PeeJQR2.txt (UTF-8 reading copy)",
+          "url": "documentation/peejqr2/01-PeeJQR2.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "qrcircuit",
+      "source": "Maps/qrcircuit.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "Circuit Racing!",
+      "author": "Matthew \"DarkBrother\" Piggott",
+      "description": "A short circuit for pure racing.",
+      "version": "",
+      "dateLabel": "13 July 1997",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "The readme names circuit.bsp, but the actual file in the ZIP is qrcircuit.bsp.",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 98804,
+      "sha256": "070d59249bf4479d6feee446592233f8c39ffd38bfdf59f0f527e87e9930a246",
+      "originalFilename": "qrcircuit.zip",
+      "download": "files/maps/qrcircuit.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/qrcircuit.txt"
+        },
+        {
+          "label": "Archived text: Quake/Rally/maps/qrcircuit.txt (UTF-8 reading copy)",
+          "url": "documentation/qrcircuit/01-qrcircuit.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "qrdaf01",
+      "source": "Maps/qrdaf01.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "Stunt Rally",
+      "author": "Chris Sparks (DaFragsta)",
+      "description": "Jumps, stunts and racing with weapons.",
+      "version": "",
+      "dateLabel": "17 November 1997; previously circulating since August",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 353078,
+      "sha256": "5417886b47ad79eb9f71cf6185128fd63df0533d21ff84e964116af8725f619a",
+      "originalFilename": "qrdaf01.zip",
+      "download": "files/maps/qrdaf01.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/qrdaf01.txt"
+        },
+        {
+          "label": "Archived text: qrdaf01.txt (UTF-8 reading copy)",
+          "url": "documentation/qrdaf01/01-qrdaf01.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "racecity",
+      "source": "Maps/racecity.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "RaceCity",
+      "author": "Stuart Stephen",
+      "description": "The original archived build of the RaceCity track.",
+      "version": "",
+      "dateLabel": "3 August 1997",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 512265,
+      "sha256": "d3fc00cacce50f69a567b78066085616e8eeccf99aeacb11cd357decd73181c1",
+      "originalFilename": "racecity.zip",
+      "download": "files/maps/racecity.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/racecity.txt"
+        },
+        {
+          "label": "Archived text: racecity.txt (UTF-8 reading copy)",
+          "url": "documentation/racecity/01-racecity.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "racecity_visd",
+      "source": "Maps/racecity_visd.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "RaceCity — VIS build",
+      "author": "Stuart Stephen",
+      "description": "An alternative compiled RaceCity build with visibility data.",
+      "version": "",
+      "dateLabel": "",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "Not a duplicate. Several BSP sections differ from racecity.zip, not just visibility data. Performance and gameplay differences have not been tested.",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Alternative build",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 529604,
+      "sha256": "652d7991671ad8ec45caba76c199a7f3037e366223f4404de26a00b778d86793",
+      "originalFilename": "racecity_visd.zip",
+      "download": "files/maps/racecity_visd.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/racecity_visd.txt"
+        },
+        {
+          "label": "Archived text: racecity.txt (UTF-8 reading copy)",
+          "url": "documentation/racecity_visd/01-racecity.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "rivrace2",
+      "source": "Maps/rivrace2.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "River Race 2",
+      "author": "Peter Lomax (PCL / Hawkmoon)",
+      "description": "A historical QuakeRally racing circuit by Peter Lomax.",
+      "version": "",
+      "dateLabel": "19 October 1997",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "The readme permits unchanged electronic distribution with the text file, but requires separate permission for inclusion in a level PAK or for commercial distribution. Preserved here as an individual original download.",
+      "bytes": 346887,
+      "sha256": "ed6e02d1b5be1e4ddfb6ade5e50b5b166d959226eb2282ad3054543a42bc2dcd",
+      "originalFilename": "rivrace2.zip",
+      "download": "files/maps/rivrace2.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/rivrace2.txt"
+        },
+        {
+          "label": "Archived text: rivrace2.txt (UTF-8 reading copy)",
+          "url": "documentation/rivrace2/01-rivrace2.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "roadkill1",
+      "source": "Maps/roadkill1.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "roadkill1",
+      "author": "Dave Wimmers (Byte Me)",
+      "description": "A combined racing and deathmatch map, with tricky sections to catch out your opponents.",
+      "version": "",
+      "dateLabel": "16 August 1997",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "The actual BSP filename is roadkil1.bsp, with a single l before the 1.",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 293948,
+      "sha256": "43b5bad21edb2b19ab1b35b8e7d56a1bb8988de916745021e05ae53fee2fb40e",
+      "originalFilename": "roadkill1.zip",
+      "download": "files/maps/roadkill1.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/roadkill1.txt"
+        },
+        {
+          "label": "Archived text: roadkill1.txt (UTF-8 reading copy)",
+          "url": "documentation/roadkill1/01-roadkill1.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "roadrun",
+      "source": "Maps/roadrun.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "Roadrunner",
+      "author": "Alex Parker",
+      "description": "From city streets to country roads, underground tunnels and lava jumps. Version 1.",
+      "version": "",
+      "dateLabel": "1998",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 714724,
+      "sha256": "3963dc507f8f466d5a413c970c500b6af61a8a62c6105a3ae8918b85ad99908e",
+      "originalFilename": "roadrun.zip",
+      "download": "files/maps/roadrun.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/roadrun.txt"
+        },
+        {
+          "label": "Archived text: RoadRun.txt (UTF-8 reading copy)",
+          "url": "documentation/roadrun/01-RoadRun.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "sub-aqua",
+      "source": "Maps/sub-aqua.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "Sub-Aqua",
+      "author": "Ben \"Krash\" Ackland",
+      "description": "An aquatic-themed QuakeRally map by Krash.",
+      "version": "",
+      "dateLabel": "",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 536602,
+      "sha256": "c979f4be022323704cf6278f37f80279768b92e379bd536d5497d2e5b52bdecb",
+      "originalFilename": "sub-aqua.zip",
+      "download": "files/maps/sub-aqua.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/sub-aqua.txt"
+        },
+        {
+          "label": "Archived text: QUAKE/ID1/maps/sub-aqua.txt (UTF-8 reading copy)",
+          "url": "documentation/sub-aqua/01-sub-aqua.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "udriveby",
+      "source": "Maps/udriveby.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "Urban Driveby",
+      "author": "Steve Towle (Dipstick)",
+      "description": "Version 1.0 of the Urban Driveby map, with an additional recorded demo.",
+      "version": "",
+      "dateLabel": "31 July 1997",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 678638,
+      "sha256": "af5a7978e7621808730d9e6e386111eb7cdbb99451b1a7b4bd16c78ba7bc6494",
+      "originalFilename": "udriveby.zip",
+      "download": "files/maps/udriveby.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/udriveby.txt"
+        },
+        {
+          "label": "Archived text: UDRIVEBY.TXT (UTF-8 reading copy)",
+          "url": "documentation/udriveby/01-UDRIVEBY.TXT.txt"
+        }
+      ]
+    },
+    {
+      "id": "vulcan",
+      "source": "Maps/vulcan.zip",
+      "category": "maps",
+      "categoryLabel": "Add-on maps",
+      "title": "Vulcan (The Tensar Project)",
+      "author": "Peter Lomax (PCL / Hawkmoon)",
+      "description": "A historical QuakeRally racing track by Peter Lomax.",
+      "version": "",
+      "dateLabel": "27 January 1998",
+      "requires": "Quake 1 with QuakeRally installed. Follow the original map readme.",
+      "note": "",
+      "evidence": "Original readme in the ZIP and/or the separately preserved text file; actual filenames checked against the ZIP directory.",
+      "status": "Add-on map",
+      "rights": "The readme permits unchanged electronic distribution with the text file, but requires separate permission for inclusion in a level PAK or for commercial distribution. Preserved here as an individual original download.",
+      "bytes": 262691,
+      "sha256": "71485a4d736c13b70fab4926882c8c5706c4621a501a29f992b92f4d0c6c690d",
+      "originalFilename": "vulcan.zip",
+      "download": "files/maps/vulcan.zip",
+      "readmes": [
+        {
+          "label": "Separately preserved original readme",
+          "url": "files/readmes/vulcan.txt"
+        },
+        {
+          "label": "Archived text: vulcan.txt (UTF-8 reading copy)",
+          "url": "documentation/vulcan/01-vulcan.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "hummer",
+      "source": "Maps/hummer.ZIP",
+      "category": "vehicles",
+      "categoryLabel": "Vehicles & wheels",
+      "title": "Hummer",
+      "author": "jeff M. garstecki (stecki)",
+      "description": "A replacement vehicle model with civilian and military skins.",
+      "version": "1.0",
+      "dateLabel": "24 November 1997",
+      "requires": "QuakeRally 1.2.",
+      "note": "An Ultimate Rally model port. The readme explains its changed proportions caused by QuakeRally 1.2’s fixed wheelbase.",
+      "evidence": "hummer12.txt and hummer12.mdl in the ZIP.",
+      "status": "Vehicle model",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 37938,
+      "sha256": "d33a086bf4c958d051af28cc3fdd8ea503466237445e7805b336caeae0ddd27b",
+      "originalFilename": "hummer.ZIP",
+      "download": "files/vehicles/hummer.ZIP",
+      "readmes": [
+        {
+          "label": "Archived text: hummer12.txt (UTF-8 reading copy)",
+          "url": "documentation/hummer/01-hummer12.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "fwhl_oz",
+      "source": "Wheels/fwhl_oz.ZIP",
+      "category": "vehicles",
+      "categoryLabel": "Vehicles & wheels",
+      "title": "OZ Monte Carlo wheels",
+      "author": "jeff M. garstecki (stecki)",
+      "description": "Five-spoke replacement wheels for the QuakeRally cars.",
+      "version": "1.01",
+      "dateLabel": "13 Dezember 1997",
+      "requires": "QuakeRally 1.2.",
+      "note": "The original instructions require renaming fwhl_oz.MDL to fwhl.mdl in the model directory. Back up the existing model first.",
+      "evidence": "oz_readme.txt in the ZIP.",
+      "status": "Wheel model",
+      "rights": "The author allows broad use and asks for a link to the original page. The original readme and credits are preserved.",
+      "bytes": 31672,
+      "sha256": "831dbd1de14741230b1687908503a3126e5f02409a4188aaf6ac16c0635df664",
+      "originalFilename": "fwhl_oz.ZIP",
+      "download": "files/vehicles/fwhl_oz.ZIP",
+      "readmes": [
+        {
+          "label": "Archived text: oz_readme.txt (UTF-8 reading copy)",
+          "url": "documentation/fwhl_oz/01-oz_readme.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "qrallymusic",
+      "source": "Maps/qrallymusic.zip",
+      "category": "music",
+      "categoryLabel": "Music",
+      "title": "QuakeRally music modules",
+      "author": "Virgill / Artwork",
+      "description": "Six original looping .mod tracks by Virgill / Artwork.",
+      "version": "",
+      "dateLabel": "1997",
+      "requires": "A MOD-compatible music player for listening.",
+      "note": "A music archive, not a map pack.",
+      "evidence": "The music readme and six .mod files in the ZIP.",
+      "status": "Original music",
+      "rights": "Copyright 1997 Virgill/Artwork. The readme describes listening enjoyment and asks others not to rip off the work. This is not presented as a freely reusable sample library.",
+      "bytes": 1179708,
+      "sha256": "8a4b4f2ac119506f5003eb425ec7a35ec57735e9d9b450e11a3a6a44914dce91",
+      "originalFilename": "qrallymusic.zip",
+      "download": "files/music/qrallymusic.zip",
+      "readmes": [
+        {
+          "label": "Archived text: qracer.txt (UTF-8 reading copy)",
+          "url": "documentation/qrallymusic/01-qracer.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "qrwad11",
+      "source": "Maps/qrWAD11.zip",
+      "category": "mapping",
+      "categoryLabel": "Mapping resources",
+      "title": "QuakeRally texture WAD",
+      "author": "Rowan \"Sumaleth\" Crawford, Modesty & Brian \"Wendigo\" Hess",
+      "description": "The original QuakeRally texture set: 137 textures with some unused extras.",
+      "version": "final",
+      "dateLabel": "",
+      "requires": "A Quake map editor with WAD support.",
+      "note": "A texture resource, not a playable map.",
+      "evidence": "Original texture readme in the ZIP.",
+      "status": "Mapping resource",
+      "rights": "The readme limits these textures to QuakeRally maps and restricts sale and CD distribution. This is not a general-purpose texture library.",
+      "bytes": 420739,
+      "sha256": "bfd6f2df194727edbeae308a33d88402ba326e6e28ae9108a105effb6a609261",
+      "originalFilename": "qrWAD11.zip",
+      "download": "files/mapping/qrWAD11.zip",
+      "readmes": [
+        {
+          "label": "Archived text: qrallyWAD.txt (UTF-8 reading copy)",
+          "url": "documentation/qrwad11/01-qrallyWAD.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "qr_maps",
+      "source": "Maps/qr_maps.zip",
+      "category": "mapping",
+      "categoryLabel": "Mapping resources",
+      "title": "QuakeRally map sources & FGD",
+      "author": "Impact Development Team",
+      "description": "Rally9wc.map, Rally10.map and quake.fgd for mapping and historical research.",
+      "version": "",
+      "dateLabel": "",
+      "requires": "A compatible Quake map editor. The sources must be compiled before they can be played.",
+      "note": "Detailed authorship and usage terms for the individual source files are not established.",
+      "evidence": "Filenames and file types in the original ZIP directory.",
+      "status": "Development material",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 25843,
+      "sha256": "08b523eb7a9276b25a203b955a13830a412fd624b4b39952d76f95420880039f",
+      "originalFilename": "qr_maps.zip",
+      "download": "files/mapping/qr_maps.zip",
+      "readmes": []
+    },
+    {
+      "id": "qrgallery",
+      "source": "Prefabs/qrgallery.zip",
+      "category": "mapping",
+      "categoryLabel": "Mapping resources",
+      "title": "QuakeRally Worldcraft prefabs",
+      "author": "Not established in the archive",
+      "description": "The qrally.WLB Worldcraft prefab library. Despite its filename, this is not an image gallery.",
+      "version": "",
+      "dateLabel": "",
+      "requires": "A historical Worldcraft editor with WLB support.",
+      "note": "No readme is included. Authorship and usage terms need to be established before reusing the prefabs.",
+      "evidence": "The only ZIP member is qrally.WLB.",
+      "status": "Provenance incomplete",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 43013,
+      "sha256": "dc53db01d7edd3e37b92c62d743bdd47e389b002c19a69dd62463ddc6f814c4b",
+      "originalFilename": "qrgallery.zip",
+      "download": "files/mapping/qrgallery.zip",
+      "readmes": []
+    },
+    {
+      "id": "quakerally_docs",
+      "source": "Docs/quakerally_docs.zip",
+      "category": "docs",
+      "categoryLabel": "Documentation",
+      "title": "Historical QuakeRally documentation",
+      "author": "Impact Development Team",
+      "description": "Archived HTML documentation, including track and model specifications.",
+      "version": "",
+      "dateLabel": "",
+      "requires": "A web browser for local reading.",
+      "note": "A later Wayback Machine snapshot, not an original release package. The documents include archive-added content and were retrieved in 2026.",
+      "evidence": "HTML archive comments identify Internet Archive captures, including February 1998, and retrieval in February 2026.",
+      "status": "Documentation snapshot",
+      "rights": "Keep the original archive, readme and credits intact. See the included original text for the author’s distribution and usage terms.",
+      "bytes": 25475,
+      "sha256": "5c9d246212854e5e42991f39d5fedaf21cb5bda9b74ff9cbd11252554c393bed",
+      "originalFilename": "quakerally_docs.zip",
+      "download": "files/docs/quakerally_docs.zip",
+      "readmes": [
+        {
+          "label": "Archived text: specs.htm (UTF-8 reading copy)",
+          "url": "documentation/quakerally_docs/01-specs.htm.txt"
+        },
+        {
+          "label": "Archived text: qrentities.htm (UTF-8 reading copy)",
+          "url": "documentation/quakerally_docs/02-qrentities.htm.txt"
+        },
+        {
+          "label": "Archived text: qr_docs.html (UTF-8 reading copy)",
+          "url": "documentation/quakerally_docs/03-qr_docs.html.txt"
+        },
+        {
+          "label": "Archived text: TODO.TXT (UTF-8 reading copy)",
+          "url": "documentation/quakerally_docs/04-TODO.TXT.txt"
+        },
+        {
+          "label": "Archived text: trackFAQ.htm (UTF-8 reading copy)",
+          "url": "documentation/quakerally_docs/05-trackFAQ.htm.txt"
+        }
+      ]
+    },
+    {
+      "id": "qrally01",
+      "source": "Maps/qrally01.zip",
+      "category": "stock-maps",
+      "categoryLabel": "Stock maps & variants",
+      "title": "qrally01 — stock map archive",
+      "author": "Impact Development Team",
+      "description": "A separately packaged stock map from QuakeRally 1.0.",
+      "version": "",
+      "dateLabel": "",
+      "requires": "Quake 1 with QuakeRally installed.",
+      "note": "The BSP is byte-identical to RALLY/MAPS/QRALLY01.BSP in the nested 1.0 full archive. The generated 2014 mapinfo file does not establish an original release date.",
+      "evidence": "SHA-256 comparison of BSP data or comparison of all 15 BSP sections, plus the included generated mapinfo text.",
+      "status": "Stock map / variant",
+      "rights": "The historical documentation restricts sale, CD-ROM distribution and use of the assets in other products. No blanket open-source licence is claimed for the models, textures or music. See the original documentation.",
+      "bytes": 597457,
+      "sha256": "5b2720d33176bfdd4794022cbac99e5884b303bcc313eaeee90cd7e03f4f8d11",
+      "originalFilename": "qrally01.zip",
+      "download": "files/stock-maps/qrally01.zip",
+      "readmes": [
+        {
+          "label": "Archived text: mapinfo-qrally01.txt (UTF-8 reading copy)",
+          "url": "documentation/qrally01/01-mapinfo-qrally01.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "qrally02",
+      "source": "Maps/qrally02.zip",
+      "category": "stock-maps",
+      "categoryLabel": "Stock maps & variants",
+      "title": "qrally02 — stock map archive",
+      "author": "Impact Development Team",
+      "description": "A separately packaged stock map from QuakeRally 1.2.",
+      "version": "",
+      "dateLabel": "",
+      "requires": "Quake 1 with QuakeRally installed.",
+      "note": "The BSP is byte-identical to RALLY/MAPS/QRALLY02.BSP in qr12.zip. The generated 2014 mapinfo file does not establish an original release date.",
+      "evidence": "SHA-256 comparison of BSP data or comparison of all 15 BSP sections, plus the included generated mapinfo text.",
+      "status": "Stock map / variant",
+      "rights": "The historical documentation restricts sale, CD-ROM distribution and use of the assets in other products. No blanket open-source licence is claimed for the models, textures or music. See the original documentation.",
+      "bytes": 505645,
+      "sha256": "d057eedccb409aa4f75b3f63c000da57c46133945b19b86feb1bb905d0c30892",
+      "originalFilename": "qrally02.zip",
+      "download": "files/stock-maps/qrally02.zip",
+      "readmes": [
+        {
+          "label": "Archived text: mapinfo-qrally02.txt (UTF-8 reading copy)",
+          "url": "documentation/qrally02/01-mapinfo-qrally02.txt.txt"
+        }
+      ]
+    },
+    {
+      "id": "qrally03",
+      "source": "Maps/qrally03.zip",
+      "category": "stock-maps",
+      "categoryLabel": "Stock maps & variants",
+      "title": "qrally03 — stock map variant",
+      "author": "Impact Development Team",
+      "description": "A variant of a stock map, kept separate from new add-on tracks.",
+      "version": "",
+      "dateLabel": "",
+      "requires": "Quake 1 with QuakeRally installed.",
+      "note": "Only the entity section differs from QRALLY03.BSP in qr12.zip; the other 14 BSP sections are byte-identical. The purpose and provenance of the changes are not established. The 2014 mapinfo file is not an original release date.",
+      "evidence": "SHA-256 comparison of BSP data or comparison of all 15 BSP sections, plus the included generated mapinfo text.",
+      "status": "Stock map / variant",
+      "rights": "The historical documentation restricts sale, CD-ROM distribution and use of the assets in other products. No blanket open-source licence is claimed for the models, textures or music. See the original documentation.",
+      "bytes": 640611,
+      "sha256": "86f8845d910addd89630077f868ffa6d72582480ab6a69dfe270efaf11aad3fd",
+      "originalFilename": "qrally03.zip",
+      "download": "files/stock-maps/qrally03.zip",
+      "readmes": [
+        {
+          "label": "Archived text: mapinfo-qrally03.txt (UTF-8 reading copy)",
+          "url": "documentation/qrally03/01-mapinfo-qrally03.txt.txt"
+        }
+      ]
+    }
+  ],
+  "images": [
+    {
+      "url": "images/1.png",
+      "caption": "1.png",
+      "alt": "A red and yellow QuakeRally car approaches a ramp above lava."
+    },
+    {
+      "url": "images/2.jpg",
+      "caption": "2.jpg",
+      "alt": "QuakeRally cars bunch together beneath a chequered start banner."
+    },
+    {
+      "url": "images/3.webp",
+      "caption": "3.webp",
+      "alt": "A red and yellow car drives through a QuakeRally-branded arena."
+    },
+    {
+      "url": "images/4.jpg",
+      "caption": "4.jpg",
+      "alt": "Cars tackle a steep chequered section of a QuakeRally track."
+    },
+    {
+      "url": "images/qr12c.jpg",
+      "caption": "qr12c.jpg",
+      "alt": "A gold QuakeRally car beside brick buildings."
+    },
+    {
+      "url": "images/spasm0001.png",
+      "caption": "spasm0001.png",
+      "alt": "A silver QuakeRally car approaches a chequered finish line."
+    },
+    {
+      "url": "images/spasm0007.1.png",
+      "caption": "spasm0007.1.png",
+      "alt": "A white QuakeRally vehicle drives beneath a swirling sky."
+    }
+  ]
+}
